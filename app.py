@@ -11,11 +11,11 @@ import re
 import base64
 from datetime import datetime
 
-# matplotlib非交互式后端配置
-import matplotlib
-matplotlib.use('Agg')
-import matplotlib.pyplot as plt
-from wordcloud import WordCloud
+# 移除matplotlib和wordcloud依赖（词云图已替换为Plotly交互式图表）
+# import matplotlib
+# matplotlib.use('Agg')
+# import matplotlib.pyplot as plt
+# from wordcloud import WordCloud
 
 # ===================== 全局常量配置 =====================
 PROVINCE_STD_MAP = {
@@ -36,11 +36,12 @@ PROVINCE_STD_MAP = {
 
 CHINA_GEOJSON_URL = "https://geo.datav.aliyun.com/areas_v3/bound/100000_full.json"
 
-try:
-    plt.rcParams['font.sans-serif'] = ['SimHei', 'Microsoft YaHei', 'Noto Sans CJK SC', 'WenQuanYi Micro Hei', 'DejaVu Sans']
-    plt.rcParams['axes.unicode_minus'] = False
-except:
-    pass
+# 字体配置已移除（不再使用matplotlib）
+# try:
+#     plt.rcParams['font.sans-serif'] = ['SimHei', 'Microsoft YaHei', 'Noto Sans CJK SC', 'WenQuanYi Micro Hei', 'DejaVu Sans']
+#     plt.rcParams['axes.unicode_minus'] = False
+# except:
+#     pass
 
 # 科技感配色
 CUSTOM_COLORS = ["#00d4ff", "#3b82f6", "#06b6d4", "#8b5cf6", "#f59e0b", "#10b981", "#ec4899", "#6366f1"]
@@ -81,11 +82,11 @@ st.markdown("""
         text-shadow: 0 0 30px rgba(0, 212, 255, 0.3);
     }
     .sub-header {
-        font-size: 1.4rem;
+        font-size: 1.3rem;
         font-weight: 600;
         color: #e2e8f0;
-        margin: 1.5rem 0 0.8rem 0;
-        padding-bottom: 0.4rem;
+        margin: 1.2rem 0 0.6rem 0;
+        padding-bottom: 0.3rem;
         border-bottom: 2px solid transparent;
         border-image: linear-gradient(90deg, #00d4ff, #3b82f6, transparent) 1;
         display: inline-block;
@@ -99,14 +100,14 @@ st.markdown("""
     /* 统计卡片 - 玻璃拟态 */
     .stat-card-container {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-        gap: 1rem;
+        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+        gap: 0.8rem;
         margin: 0.6rem 0;
     }
     .stat-card {
         background: linear-gradient(135deg, rgba(30, 41, 59, 0.8) 0%, rgba(15, 23, 42, 0.9) 100%);
         border-radius: 16px;
-        padding: 1.2rem 1rem;
+        padding: 1rem 0.9rem;
         box-shadow: 0 4px 20px rgba(0, 212, 255, 0.1), inset 0 1px 0 rgba(255,255,255,0.1);
         text-align: left;
         transition: all 0.3s ease;
@@ -130,24 +131,25 @@ st.markdown("""
         border-color: rgba(0, 212, 255, 0.4);
     }
     .stat-value {
-        font-size: 1.7rem;
+        font-size: 1.5rem;
         font-weight: 700;
         color: #00d4ff;
         margin-bottom: 0.3rem;
         text-shadow: 0 0 10px rgba(0, 212, 255, 0.4);
     }
     .stat-label {
-        font-size: 0.85rem;
+        font-size: 0.8rem;
         color: #94a3b8;
         font-weight: 500;
+        line-height: 1.3;
     }
     /* 内容卡片 - 深色玻璃 */
     .content-card {
         background: linear-gradient(135deg, rgba(30, 41, 59, 0.7) 0%, rgba(15, 23, 42, 0.85) 100%);
         border-radius: 16px;
-        padding: 1.2rem 1.3rem;
+        padding: 1rem 1.1rem;
         box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255,255,255,0.05);
-        margin: 0.6rem 0;
+        margin: 0.5rem 0;
         transition: all 0.3s ease;
         border: 1px solid rgba(59, 130, 246, 0.15);
     }
@@ -155,20 +157,27 @@ st.markdown("""
         box-shadow: 0 6px 25px rgba(0, 212, 255, 0.15), inset 0 1px 0 rgba(255,255,255,0.1);
         border-color: rgba(59, 130, 246, 0.3);
     }
+    /* 图表容器优化 */
+    .chart-wrapper {
+        background: linear-gradient(135deg, rgba(30, 41, 59, 0.5) 0%, rgba(15, 23, 42, 0.7) 100%);
+        border-radius: 12px;
+        padding: 0.8rem;
+        margin: 0.4rem 0;
+    }
     .chart-title {
-        font-size: 1rem;
+        font-size: 0.95rem;
         font-weight: 600;
         color: #e2e8f0;
-        margin-bottom: 0.8rem;
-        padding-left: 0.6rem;
+        margin-bottom: 0.6rem;
+        padding-left: 0.5rem;
         border-left: 3px solid #00d4ff;
         line-height: 1.2;
     }
     /* 建议模块 */
     .suggestion-box {
         border-radius: 12px;
-        padding: 0.9rem 1.1rem;
-        margin: 0.5rem 0;
+        padding: 0.7rem 0.9rem;
+        margin: 0.4rem 0;
         border-left: 3px solid;
         background: linear-gradient(90deg, rgba(30, 41, 59, 0.6) 0%, rgba(15, 23, 42, 0.4) 100%);
     }
@@ -190,19 +199,19 @@ st.markdown("""
     }
     .suggestion-title {
         font-weight: 600;
-        font-size: 0.95rem;
-        margin-bottom: 0.4rem;
+        font-size: 0.9rem;
+        margin-bottom: 0.3rem;
         color: #e2e8f0;
     }
     .suggestion-text {
         color: #cbd5e1;
-        line-height: 1.6;
-        font-size: 0.9rem;
+        line-height: 1.5;
+        font-size: 0.85rem;
     }
     .data-basis {
         color: #64748b;
-        font-size: 0.8rem;
-        margin-top: 0.3rem;
+        font-size: 0.75rem;
+        margin-top: 0.2rem;
     }
     /* 侧边栏 */
     .stSidebar {
@@ -340,23 +349,47 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ===================== 核心工具函数 =====================
-def generate_word_cloud(freq_dict: Dict[str, float], title: str = ""):
-    if not freq_dict:
+def generate_bubble_scatter(df_latest, selected_years, metric_unit):
+    """生成省份规模-增速气泡图（替代词云图）"""
+    if df_latest is None or len(df_latest) == 0:
         return None
     try:
-        wc = WordCloud(
-            width=1000, height=450, background_color='#0f172a',
-            colormap='cool', max_words=60, prefer_horizontal=0.7,
-            font_path=None
+        # 计算每个省份的增速
+        year_span = selected_years[1] - selected_years[0]
+        cagr_data = []
+        for prov in df_latest["地区"].unique():
+            prov_data = df_latest[df_latest["地区"] == prov].sort_values("年份")
+            if len(prov_data) >= 2:
+                s_val = prov_data.iloc[0]["指标值"]
+                e_val = prov_data.iloc[-1]["指标值"]
+                cagr = safe_cagr(s_val, e_val, year_span)
+                latest_val = prov_data.iloc[-1]["指标值"]
+                cagr_data.append({
+                    "地区": prov,
+                    "最新值": latest_val,
+                    "年均增速": cagr,
+                    "规模等级": "大型" if latest_val > df_latest["指标值"].quantile(0.75) else
+                               "中型" if latest_val > df_latest["指标值"].quantile(0.25) else "小型"
+                })
+        if len(cagr_data) < 3:
+            return None
+        df_bubble = pd.DataFrame(cagr_data)
+        fig = px.scatter(
+            df_bubble, x="最新值", y="年均增速", size="最新值", color="规模等级",
+            hover_name="地区", text="地区",
+            color_discrete_map={"大型": "#00d4ff", "中型": "#3b82f6", "小型": "#8b5cf6"},
+            template="plotly_dark",
+            labels={"最新值": f"最新规模 ({metric_unit})", "年均增速": "年均增速"}
         )
-        wc.generate_from_frequencies(freq_dict)
-        fig, ax = plt.subplots(figsize=(11, 4.8))
-        ax.imshow(wc, interpolation='bilinear')
-        ax.axis('off')
-        if title:
-            ax.set_title(title, fontsize=14, pad=10, color='#e2e8f0')
-        fig.patch.set_facecolor('#0f172a')
-        plt.tight_layout()
+        fig.update_traces(textposition="top center", textfont=dict(size=10, color="#e2e8f0"))
+        fig.add_hline(y=0, line_dash="dash", line_color="gray")
+        fig.update_layout(
+            height=420,
+            legend=dict(orientation="h", yanchor="bottom", y=-0.25, xanchor="center", x=0.5, font_color="#e2e8f0"),
+            margin=dict(l=10, r=10, t=10, b=10),
+            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+            font=dict(color="#e2e8f0")
+        )
         return fig
     except Exception:
         return None
@@ -563,15 +596,15 @@ def generate_html_report(analysis_mode, selected_years, selected_provinces,
             <div class="stats-grid">
                 <div class="stat-box">
                     <div class="number">{avg_val:,.2f}</div>
-                    <div class="label">省份均值 ({metric_unit})</div>
+                    <div class="label">省份均值{f" ({metric_unit})" if metric_unit else ""}</div>
                 </div>
                 <div class="stat-box">
                     <div class="number">{national_avg:,.2f}</div>
-                    <div class="label">全国均值 ({metric_unit})</div>
+                    <div class="label">全国均值{f" ({metric_unit})" if metric_unit else ""}</div>
                 </div>
                 <div class="stat-box">
                     <div class="number">{max_val:,.2f}</div>
-                    <div class="label">最高值 ({metric_unit})</div>
+                    <div class="label">最高值{f" ({metric_unit})" if metric_unit else ""}</div>
                 </div>
                 <div class="stat-box">
                     <div class="number">{cv_val:.1%}</div>
@@ -595,7 +628,7 @@ def generate_html_report(analysis_mode, selected_years, selected_provinces,
                     <tr>
                         <th>排名</th>
                         <th>省份</th>
-                        <th>指标值 ({metric_unit})</th>
+                        <th>指标值{f" ({metric_unit})" if metric_unit else ""}</th>
                         <th>相对全国均值</th>
                         <th>发展梯队</th>
                     </tr>
@@ -1039,6 +1072,15 @@ def main():
     # 新手引导
     show_newbie_guide()
 
+    # 科技感分隔图
+    section_img = get_image_base64("assets/section_divider.jpg")
+    if section_img:
+        st.markdown(f"""
+        <div style="margin: 0.5rem 0; border-radius: 12px; overflow: hidden;">
+            <img src="data:image/jpeg;base64,{section_img}" style="width: 100%; height: 80px; object-fit: cover; opacity: 0.7;">
+        </div>
+        """, unsafe_allow_html=True)
+
     # 状态栏
     mode_desc = "省际横向对比分析" if analysis_mode == "🌍 省际对比分析" else f"{selected_provinces[0]} 多维度深度分析"
     st.markdown(f"""
@@ -1053,7 +1095,8 @@ def main():
     """, unsafe_allow_html=True)
 
     if analysis_mode == "🌍 省际对比分析":
-        st.markdown(f'<div class="section-desc" style="text-align: center; color: #94a3b8;">💡 指标说明：{selected_metric}（{metric_unit}）</div>', unsafe_allow_html=True)
+        unit_display = f"（{metric_unit}）" if metric_unit else ""
+        st.markdown(f'<div class="section-desc" style="text-align: center; color: #94a3b8;">💡 指标说明：{selected_metric}{unit_display}</div>', unsafe_allow_html=True)
 
     # ==================================================================
     # 模式一：省际对比分析
@@ -1073,9 +1116,9 @@ def main():
         st.markdown('<h2 class="sub-header">📊 核心指标概览</h2>', unsafe_allow_html=True)
         st.markdown(f"""
         <div class="stat-card-container">
-            <div class="stat-card"><div class="stat-value">{avg_val:,.2f}</div><div class="stat-label">省份均值（{metric_unit}）</div></div>
-            <div class="stat-card"><div class="stat-value">{national_avg:,.2f}</div><div class="stat-label">全国均值（{metric_unit}）</div></div>
-            <div class="stat-card"><div class="stat-value">{max_val:,.2f}</div><div class="stat-label">最高值（{metric_unit}）</div></div>
+            <div class="stat-card"><div class="stat-value">{avg_val:,.2f}</div><div class="stat-label">省份均值{f"（{metric_unit}）" if metric_unit else ""}</div></div>
+            <div class="stat-card"><div class="stat-value">{national_avg:,.2f}</div><div class="stat-label">全国均值{f"（{metric_unit}）" if metric_unit else ""}</div></div>
+            <div class="stat-card"><div class="stat-value">{max_val:,.2f}</div><div class="stat-label">最高值{f"（{metric_unit}）" if metric_unit else ""}</div></div>
             <div class="stat-card"><div class="stat-value">{cv_val:.1%}</div><div class="stat-label">省际离散度</div></div>
             <div class="stat-card"><div class="stat-value">{total_cagr:.2%}</div><div class="stat-label">整体年均增速</div></div>
             <div class="stat-card"><div class="stat-value">{year_span+1}</div><div class="stat-label">分析年度跨度</div></div>
@@ -1110,8 +1153,8 @@ def main():
                 )
                 fig_map.update_layout(
                     height=chart_height + 60,
-                    margin=dict(l=0, r=0, t=0, b=0),
-                    coloraxis_colorbar=dict(title="", thickness=15, len=0.7, tickfont=dict(color="#e2e8f0")),
+                    margin=dict(l=0, r=30, t=0, b=0),
+                    coloraxis_colorbar=dict(title="", thickness=15, len=0.7, tickfont=dict(color="#e2e8f0"), xpad=10),
                     paper_bgcolor="rgba(0,0,0,0)",
                     plot_bgcolor="rgba(0,0,0,0)"
                 )
@@ -1139,8 +1182,9 @@ def main():
                 template="plotly_dark"
             )
             fig_rank.update_layout(
-                height=chart_height + 60, showlegend=False,
-                margin=dict(l=10, r=10, t=10, b=10), xaxis_title="",
+                height=chart_height + 60, showlegend=True,
+                legend=dict(orientation="h", yanchor="bottom", y=-0.2, xanchor="center", x=0.5, font=dict(size=9, color="#e2e8f0")),
+                margin=dict(l=10, r=10, t=10, b=40), xaxis_title="",
                 paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
                 font=dict(color="#e2e8f0")
             )
@@ -1175,8 +1219,8 @@ def main():
 
         fig_sub1.update_layout(
             height=chart_height, template="plotly_dark",
-            legend=dict(orientation="h", yanchor="bottom", y=-0.2, xanchor="center", x=0.5),
-            margin=dict(l=10, r=10, t=30, b=10),
+            legend=dict(orientation="v", yanchor="top", y=1.0, xanchor="left", x=1.02, font=dict(size=10, color="#e2e8f0")),
+            margin=dict(l=10, r=120, t=30, b=10),
             colorway=CUSTOM_COLORS,
             paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
             font=dict(color="#e2e8f0")
@@ -1199,7 +1243,9 @@ def main():
                 labels={"指标值": metric_unit, "所属地域": ""},
                 color_discrete_sequence=CUSTOM_COLORS
             )
-            fig_box.update_layout(height=chart_height, showlegend=False, margin=dict(l=10, r=10, t=10, b=10),
+            fig_box.update_layout(height=chart_height, showlegend=True,
+                                  legend=dict(orientation="h", yanchor="bottom", y=-0.25, xanchor="center", x=0.5, font=dict(size=9, color="#e2e8f0")),
+                                  margin=dict(l=10, r=10, t=10, b=40),
                                   paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font=dict(color="#e2e8f0"))
             st.plotly_chart(fig_box, use_container_width=True)
             st.markdown('</div>', unsafe_allow_html=True)
@@ -1213,11 +1259,11 @@ def main():
                 template="plotly_dark",
                 color_discrete_sequence=CUSTOM_COLORS
             )
-            fig_pie.update_traces(textinfo="percent", textfont_size=11, textfont_color="#e2e8f0")
+            fig_pie.update_traces(textinfo="percent+label", textfont_size=10, textfont_color="#e2e8f0", pull=[0.02]*10)
             fig_pie.update_layout(
                 height=chart_height,
-                legend=dict(orientation="h", yanchor="bottom", y=-0.2, xanchor="center", x=0.5, font_size=10, font_color="#e2e8f0"),
-                margin=dict(l=10, r=10, t=10, b=10),
+                legend=dict(orientation="v", yanchor="top", y=1.0, xanchor="left", x=1.02, font=dict(size=9, color="#e2e8f0")),
+                margin=dict(l=10, r=120, t=10, b=10),
                 paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)"
             )
             st.plotly_chart(fig_pie, use_container_width=True)
@@ -1225,26 +1271,68 @@ def main():
 
         with col_heat:
             st.markdown('<div class="content-card">', unsafe_allow_html=True)
-            st.markdown('<div class="chart-title">🔥 省份-年份热力矩阵</div>', unsafe_allow_html=True)
-            df_heat = df_filtered.pivot_table(index="地区", columns="年份", values="指标值", aggfunc="mean")
-            fig_heat = px.imshow(
-                df_heat, color_continuous_scale="Cividis",
-                template="plotly_dark", text_auto=".1f" if show_data_labels else False
-            )
-            fig_heat.update_layout(height=chart_height, margin=dict(l=10, r=10, t=10, b=10),
-                                   paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
-            st.plotly_chart(fig_heat, use_container_width=True)
+            st.markdown('<div class="chart-title">🔬 省份发展聚类分析（规模 vs 增速）</div>', unsafe_allow_html=True)
+            # 聚类分析：将省份按最新值和年均增速分为四个象限
+            cluster_data = []
+            year_span = selected_years[1] - selected_years[0]
+            for prov in df_latest["地区"].unique():
+                prov_data = df_filtered[df_filtered["地区"] == prov].sort_values("年份")
+                if len(prov_data) >= 2:
+                    s_val = prov_data.iloc[0]["指标值"]
+                    e_val = prov_data.iloc[-1]["指标值"]
+                    cagr = safe_cagr(s_val, e_val, year_span)
+                    latest_val = prov_data.iloc[-1]["指标值"]
+                    cluster_data.append({
+                        "地区": prov,
+                        "最新值": latest_val,
+                        "年均增速": cagr
+                    })
+            if len(cluster_data) >= 3:
+                df_cluster = pd.DataFrame(cluster_data)
+                median_val = df_cluster["最新值"].median()
+                median_cagr = df_cluster["年均增速"].median()
+                df_cluster["发展类型"] = df_cluster.apply(
+                    lambda r: "明星型（高规模高增长）" if r["最新值"] >= median_val and r["年均增速"] >= median_cagr else
+                              "现金牛型（高规模低增长）" if r["最新值"] >= median_val else
+                              "问题型（低规模高增长）" if r["年均增速"] >= median_cagr else
+                              "瘦狗型（低规模低增长）", axis=1
+                )
+                color_map = {
+                    "明星型（高规模高增长）": "#10b981",
+                    "现金牛型（高规模低增长）": "#f59e0b",
+                    "问题型（低规模高增长）": "#3b82f6",
+                    "瘦狗型（低规模低增长）": "#ef4444"
+                }
+                fig_cluster = px.scatter(
+                    df_cluster, x="最新值", y="年均增速", color="发展类型",
+                    hover_name="地区", text="地区",
+                    color_discrete_map=color_map,
+                    template="plotly_dark",
+                    labels={"最新值": f"最新规模 ({metric_unit})", "年均增速": "年均增速"}
+                )
+                fig_cluster.update_traces(textposition="top center", textfont=dict(size=10, color="#e2e8f0"))
+                fig_cluster.add_vline(x=median_val, line_dash="dash", line_color="rgba(255,255,255,0.3)")
+                fig_cluster.add_hline(y=median_cagr, line_dash="dash", line_color="rgba(255,255,255,0.3)")
+                fig_cluster.update_layout(
+                    height=chart_height,
+                    legend=dict(orientation="h", yanchor="bottom", y=-0.3, xanchor="center", x=0.5, font_color="#e2e8f0"),
+                    margin=dict(l=10, r=10, t=10, b=10),
+                    paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#e2e8f0")
+                )
+                st.plotly_chart(fig_cluster, use_container_width=True)
+            else:
+                st.info("聚类分析数据不足")
             st.markdown('</div>', unsafe_allow_html=True)
 
-        # ---- 第四行：词云图 ----
+        # ---- 第四行：省份规模-增速气泡图（替代词云图） ----
         st.markdown('<div class="content-card">', unsafe_allow_html=True)
-        st.markdown(f'<div class="chart-title">☁️ {latest_year}年省份规模词云</div>', unsafe_allow_html=True)
-        freq_dict = dict(zip(df_latest["地区"], df_latest["指标值"].abs()))
-        wc_fig = generate_word_cloud(freq_dict)
-        if wc_fig:
-            st.pyplot(wc_fig, use_container_width=True)
+        st.markdown(f'<div class="chart-title">🫧 {latest_year}年省份规模-增速气泡图</div>', unsafe_allow_html=True)
+        bubble_fig = generate_bubble_scatter(df_filtered, selected_years, metric_unit)
+        if bubble_fig:
+            st.plotly_chart(bubble_fig, use_container_width=True)
         else:
-            st.info("词云生成暂不可用，可查看上方图表获取数据")
+            st.info("气泡图数据不足，请确保选择多个省份和年份")
         st.markdown('</div>', unsafe_allow_html=True)
 
         # ---- 省级诊断建议 ----
@@ -1277,7 +1365,8 @@ def main():
             else:
                 tier, tier_cls = "第四梯队（追赶型）", "suggestion-weakness"
 
-            with st.expander(f"📍 {prov} | 全国第{rank}名 | {val:,.2f} {metric_unit}", expanded=(idx < 3)):
+            unit_str = f" {metric_unit}" if metric_unit else ""
+            with st.expander(f"📍 {prov} | 全国第{rank}名 | {val:,.2f}{unit_str}", expanded=(idx < 3)):
                 col1, col2 = st.columns(2)
                 with col1:
                     st.markdown(f"""
@@ -1292,7 +1381,7 @@ def main():
                     <div class="suggestion-box suggestion-conclusion">
                         <div class="suggestion-title">相对全国水平</div>
                         <div class="suggestion-text">为全国均值的<b>{vs_nat:.1%}</b></div>
-                        <div class="data-basis">全国均值 {national_avg:,.2f} {metric_unit}</div>
+                        <div class="data-basis">全国均值 {national_avg:,.2f}{f" {metric_unit}" if metric_unit else ""}</div>
                     </div>
                     """, unsafe_allow_html=True)
 
@@ -1313,7 +1402,7 @@ def main():
                     <div class="suggestion-box" style="background:linear-gradient(90deg, rgba(30,41,59,0.6) 0%, rgba(15,23,42,0.4) 100%); border-color:#64748b;">
                         <div class="suggestion-title">对标追赶对象</div>
                         <div class="suggestion-text"><b>{bench_prov}</b></div>
-                        <div class="data-basis">差距 {gap:.1%}，目标值 {bench_val:,.2f} {metric_unit}</div>
+                        <div class="data-basis">差距 {gap:.1%}，目标值 {bench_val:,.2f}{f" {metric_unit}" if metric_unit else ""}</div>
                     </div>
                     """, unsafe_allow_html=True)
 
@@ -1389,8 +1478,8 @@ def main():
                 fig_radar.update_layout(
                     polar=dict(radialaxis=dict(visible=True, range=[0, max_r], gridcolor="rgba(255,255,255,0.1)"), angularaxis=dict(gridcolor="rgba(255,255,255,0.1)")),
                     height=chart_height + 20, template="plotly_dark",
-                    legend=dict(orientation="h", yanchor="bottom", y=-0.2, xanchor="center", x=0.5, font_color="#e2e8f0"),
-                    margin=dict(l=10, r=10, t=10, b=10),
+                    legend=dict(orientation="h", yanchor="bottom", y=-0.15, xanchor="center", x=0.5, font_color="#e2e8f0"),
+                    margin=dict(l=10, r=10, t=20, b=40),
                     paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)"
                 )
                 st.plotly_chart(fig_radar, use_container_width=True)
@@ -1400,13 +1489,50 @@ def main():
 
         with col_wc:
             st.markdown('<div class="content-card">', unsafe_allow_html=True)
-            st.markdown(f'<div class="chart-title">指标规模词云图</div>', unsafe_allow_html=True)
-            metric_freq = dict(zip(df_prov_latest["指标名称_纯"], df_prov_latest["指标值"].abs()))
-            wc_fig = generate_word_cloud(metric_freq, f"{prov_name} 指标规模分布")
-            if wc_fig:
-                st.pyplot(wc_fig, use_container_width=True)
+            st.markdown(f'<div class="chart-title">📊 指标规模-增速矩阵图</div>', unsafe_allow_html=True)
+            # 单省模式下：各指标最新值 vs 年均增速散点图
+            metric_scatter_data = []
+            for m in selected_metrics:
+                m_data = df_prov[df_prov["指标名称_纯"] == m].sort_values("年份")
+                if len(m_data) >= 2:
+                    s_val = m_data.iloc[0]["指标值"]
+                    e_val = m_data.iloc[-1]["指标值"]
+                    span = int(m_data.iloc[-1]["年份"] - m_data.iloc[0]["年份"])
+                    cagr = safe_cagr(s_val, e_val, span)
+                    latest_val = m_data.iloc[-1]["指标值"]
+                    nat_avg = df_full[(df_full["指标名称_纯"] == m) & (df_full["年份"] == latest_year)]["指标值"].mean()
+                    vs_nat = latest_val / nat_avg if nat_avg and nat_avg > 0 else 0
+                    metric_scatter_data.append({
+                        "指标": m,
+                        "最新值": latest_val,
+                        "年均增速": cagr,
+                        "相对全国": vs_nat,
+                        "发展类型": "高规模高增长" if latest_val > nat_avg and cagr > 0.05 else
+                                   "高规模低增长" if latest_val > nat_avg else
+                                   "低规模高增长" if cagr > 0.05 else "低规模低增长"
+                    })
+            if len(metric_scatter_data) >= 3:
+                df_ms = pd.DataFrame(metric_scatter_data)
+                fig_ms = px.scatter(
+                    df_ms, x="最新值", y="年均增速", size="相对全国", color="发展类型",
+                    hover_name="指标", text="指标",
+                    color_discrete_map={"高规模高增长": "#10b981", "高规模低增长": "#f59e0b",
+                                        "低规模高增长": "#3b82f6", "低规模低增长": "#ef4444"},
+                    template="plotly_dark",
+                    labels={"最新值": "指标规模", "年均增速": "年均增速"}
+                )
+                fig_ms.update_traces(textposition="top center", textfont=dict(size=9, color="#e2e8f0"))
+                fig_ms.add_hline(y=0, line_dash="dash", line_color="gray")
+                fig_ms.update_layout(
+                    height=chart_height + 20,
+                    legend=dict(orientation="h", yanchor="bottom", y=-0.25, xanchor="center", x=0.5, font_color="#e2e8f0"),
+                    margin=dict(l=10, r=10, t=10, b=10),
+                    paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#e2e8f0")
+                )
+                st.plotly_chart(fig_ms, use_container_width=True)
             else:
-                st.info("词云生成暂不可用")
+                st.info("请选择至少3个指标以生成分散矩阵图")
             st.markdown('</div>', unsafe_allow_html=True)
 
         # ---- 第二行：2×2 多指标趋势子图 ----
@@ -1435,9 +1561,10 @@ def main():
 
         fig_multi.update_layout(
             height=chart_height + 120, template="plotly_dark",
-            margin=dict(l=10, r=10, t=30, b=10),
+            margin=dict(l=10, r=10, t=40, b=10),
             paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-            font=dict(color="#e2e8f0")
+            font=dict(color="#e2e8f0"),
+            showlegend=False
         )
         fig_multi.update_xaxes(gridcolor="rgba(255,255,255,0.1)")
         st.plotly_chart(fig_multi, use_container_width=True)
@@ -1468,7 +1595,9 @@ def main():
                     text_auto=".2%", template="plotly_dark"
                 )
                 fig_cagr.add_vline(x=0, line_dash="dash", line_color="gray")
-                fig_cagr.update_layout(height=chart_height, showlegend=False, margin=dict(l=10, r=10, t=10, b=10),
+                fig_cagr.update_layout(height=chart_height, showlegend=True,
+                                       legend=dict(orientation="h", yanchor="bottom", y=-0.2, xanchor="center", x=0.5, font=dict(size=9, color="#e2e8f0")),
+                                       margin=dict(l=10, r=10, t=10, b=40),
                                        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font=dict(color="#e2e8f0"))
                 st.plotly_chart(fig_cagr, use_container_width=True)
             st.markdown('</div>', unsafe_allow_html=True)
@@ -1483,7 +1612,9 @@ def main():
                 text_auto=".2f" if show_data_labels else False,
                 template="plotly_dark"
             )
-            fig_bar.update_layout(height=chart_height, showlegend=False, margin=dict(l=10, r=10, t=10, b=10),
+            fig_bar.update_layout(height=chart_height, showlegend=True,
+                                  legend=dict(orientation="h", yanchor="bottom", y=-0.2, xanchor="center", x=0.5, font=dict(size=9, color="#e2e8f0")),
+                                  margin=dict(l=10, r=10, t=10, b=40),
                                   paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font=dict(color="#e2e8f0"))
             st.plotly_chart(fig_bar, use_container_width=True)
             st.markdown('</div>', unsafe_allow_html=True)
@@ -1649,6 +1780,15 @@ def main():
             )
 
     st.markdown('</div>', unsafe_allow_html=True)
+
+    # 底部科技感配图
+    network_img = get_image_base64("assets/network_bg.jpg")
+    if network_img:
+        st.markdown(f"""
+        <div style="margin: 1rem 0 0.5rem 0; border-radius: 12px; overflow: hidden;">
+            <img src="data:image/jpeg;base64,{network_img}" style="width: 100%; height: 120px; object-fit: cover; opacity: 0.5;">
+        </div>
+        """, unsafe_allow_html=True)
 
     # ---- 页脚 ----
     st.markdown("""
