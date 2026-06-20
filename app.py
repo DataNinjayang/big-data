@@ -1,1802 +1,1824 @@
-# ===================== 依赖导入 =====================
+"""
+沪深300股票智能预测分析平台 V4.1
+- 修复数据获取问题：增加重试机制、备用接口、详细错误处理
+- 绝对估值法: DCF现金流折现模型 + DDM股利贴现模型
+- 相对估值法: PE/PB/PS/EV/EBITDA 行业对比
+- 多因子综合评分模型选股
+- 精美K线图 + 估值信息整合展示
+- 适配 Streamlit Cloud 部署
+"""
+
 import streamlit as st
 import pandas as pd
-import plotly.express as px
+import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-import numpy as np
-from typing import Dict, List
-import os
+import akshare as ak
+from datetime import datetime, timedelta
+import time
+import warnings
 import re
-import base64
-from datetime import datetime
+import random
+from scipy import stats
 
-# 移除matplotlib和wordcloud依赖（词云图已替换为Plotly交互式图表）
-# import matplotlib
-# matplotlib.use('Agg')
-# import matplotlib.pyplot as plt
-# from wordcloud import WordCloud
-
-# ===================== 全局常量配置 =====================
-PROVINCE_STD_MAP = {
-    "北京": "北京市", "天津": "天津市", "河北": "河北省", "山西": "山西省",
-    "内蒙古": "内蒙古自治区", "内蒙古自治区": "内蒙古自治区",
-    "辽宁": "辽宁省", "吉林": "吉林省", "黑龙江": "黑龙江省",
-    "上海": "上海市", "江苏": "江苏省", "浙江": "浙江省", "安徽": "安徽省",
-    "福建": "福建省", "江西": "江西省", "山东": "山东省", "河南": "河南省",
-    "湖北": "湖北省", "湖南": "湖南省", "广东": "广东省",
-    "广西": "广西壮族自治区", "广西壮族自治区": "广西壮族自治区",
-    "海南": "海南省", "重庆": "重庆市", "四川": "四川省", "贵州": "贵州省",
-    "云南": "云南省", "西藏": "西藏自治区", "西藏自治区": "西藏自治区",
-    "陕西": "陕西省", "甘肃": "甘肃省", "青海": "青海省",
-    "宁夏": "宁夏回族自治区", "宁夏回族自治区": "宁夏回族自治区",
-    "新疆": "新疆维吾尔自治区", "新疆维吾尔自治区": "新疆维吾尔自治区",
-    "香港": "香港特别行政区", "澳门": "澳门特别行政区", "台湾": "台湾省"
-}
-
-CHINA_GEOJSON_URL = "https://geo.datav.aliyun.com/areas_v3/bound/100000_full.json"
-
-# 字体配置已移除（不再使用matplotlib）
-# try:
-#     plt.rcParams['font.sans-serif'] = ['SimHei', 'Microsoft YaHei', 'Noto Sans CJK SC', 'WenQuanYi Micro Hei', 'DejaVu Sans']
-#     plt.rcParams['axes.unicode_minus'] = False
-# except:
-#     pass
-
-# 科技感配色
-CUSTOM_COLORS = ["#00d4ff", "#3b82f6", "#06b6d4", "#8b5cf6", "#f59e0b", "#10b981", "#ec4899", "#6366f1"]
+warnings.filterwarnings("ignore")
+np.random.seed(42)
 
 # ===================== 页面全局配置 =====================
 st.set_page_config(
-    page_title="中国省级数据库2025版 可视化决策平台",
-    page_icon="🇨🇳",
+    page_title="沪深300股票智能预测分析平台",
+    page_icon="📈",
     layout="wide",
-    initial_sidebar_state="expanded",
-    menu_items={
-        "Get Help": "https://docs.streamlit.io/",
-        "Report a bug": "https://github.com/streamlit/streamlit/issues",
-        "About": "中国省级数据库2025版 全维度可视化分析与省级发展决策支持平台"
-    }
+    initial_sidebar_state="expanded"
 )
 
-# ===================== 科技感CSS样式 =====================
-st.markdown("""
+# ===================== 自定义CSS样式 =====================
+custom_css = """
 <style>
-    @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;600;700&display=swap');
-    html, body, [class*="css"] {
-        font-family: 'Noto Sans SC', 'Microsoft YaHei', 'SimHei', sans-serif;
-    }
-    .stApp {
-        background: linear-gradient(135deg, #0a1628 0%, #0f172a 50%, #1e293b 100%);
-    }
-    /* 主标题 - 霓虹科技感 */
-    .main-header {
-        font-size: 2.6rem;
-        font-weight: 700;
-        text-align: center;
-        margin: 0.5rem 0 0.5rem 0;
-        background: linear-gradient(135deg, #00d4ff 0%, #3b82f6 40%, #8b5cf6 70%, #ec4899 100%);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        letter-spacing: 2px;
-        text-shadow: 0 0 30px rgba(0, 212, 255, 0.3);
-    }
-    .sub-header {
-        font-size: 1.3rem;
-        font-weight: 600;
-        color: #e2e8f0;
-        margin: 1.2rem 0 0.6rem 0;
-        padding-bottom: 0.3rem;
-        border-bottom: 2px solid transparent;
-        border-image: linear-gradient(90deg, #00d4ff, #3b82f6, transparent) 1;
-        display: inline-block;
-    }
-    .section-desc {
-        color: #94a3b8;
-        font-size: 0.95rem;
-        margin-bottom: 1rem;
-        line-height: 1.6;
-    }
-    /* 统计卡片 - 玻璃拟态 */
-    .stat-card-container {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-        gap: 0.8rem;
-        margin: 0.6rem 0;
-    }
-    .stat-card {
-        background: linear-gradient(135deg, rgba(30, 41, 59, 0.8) 0%, rgba(15, 23, 42, 0.9) 100%);
-        border-radius: 16px;
-        padding: 1rem 0.9rem;
-        box-shadow: 0 4px 20px rgba(0, 212, 255, 0.1), inset 0 1px 0 rgba(255,255,255,0.1);
-        text-align: left;
-        transition: all 0.3s ease;
-        border: 1px solid rgba(0, 212, 255, 0.2);
-        position: relative;
-        overflow: hidden;
-    }
-    .stat-card::before {
-        content: '';
-        position: absolute;
-        top: 0;
-        left: 0;
-        right: 0;
-        height: 2px;
-        background: linear-gradient(90deg, #00d4ff, #3b82f6, #8b5cf6);
-        opacity: 0.6;
-    }
-    .stat-card:hover {
-        transform: translateY(-3px);
-        box-shadow: 0 8px 30px rgba(0, 212, 255, 0.2), inset 0 1px 0 rgba(255,255,255,0.15);
-        border-color: rgba(0, 212, 255, 0.4);
-    }
-    .stat-value {
-        font-size: 1.5rem;
-        font-weight: 700;
-        color: #00d4ff;
-        margin-bottom: 0.3rem;
-        text-shadow: 0 0 10px rgba(0, 212, 255, 0.4);
-    }
-    .stat-label {
-        font-size: 0.8rem;
-        color: #94a3b8;
-        font-weight: 500;
-        line-height: 1.3;
-    }
-    /* 内容卡片 - 深色玻璃 */
-    .content-card {
-        background: linear-gradient(135deg, rgba(30, 41, 59, 0.7) 0%, rgba(15, 23, 42, 0.85) 100%);
-        border-radius: 16px;
-        padding: 1rem 1.1rem;
-        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255,255,255,0.05);
-        margin: 0.5rem 0;
-        transition: all 0.3s ease;
-        border: 1px solid rgba(59, 130, 246, 0.15);
-    }
-    .content-card:hover {
-        box-shadow: 0 6px 25px rgba(0, 212, 255, 0.15), inset 0 1px 0 rgba(255,255,255,0.1);
-        border-color: rgba(59, 130, 246, 0.3);
-    }
-    /* 图表容器优化 */
-    .chart-wrapper {
-        background: linear-gradient(135deg, rgba(30, 41, 59, 0.5) 0%, rgba(15, 23, 42, 0.7) 100%);
-        border-radius: 12px;
-        padding: 0.8rem;
-        margin: 0.4rem 0;
-    }
-    .chart-title {
-        font-size: 0.95rem;
-        font-weight: 600;
-        color: #e2e8f0;
-        margin-bottom: 0.6rem;
-        padding-left: 0.5rem;
-        border-left: 3px solid #00d4ff;
-        line-height: 1.2;
-    }
-    /* 建议模块 */
-    .suggestion-box {
-        border-radius: 12px;
-        padding: 0.7rem 0.9rem;
-        margin: 0.4rem 0;
-        border-left: 3px solid;
-        background: linear-gradient(90deg, rgba(30, 41, 59, 0.6) 0%, rgba(15, 23, 42, 0.4) 100%);
-    }
-    .suggestion-advantage {
-        border-color: #10b981;
-        background: linear-gradient(90deg, rgba(16, 185, 129, 0.1) 0%, rgba(15, 23, 42, 0.3) 100%);
-    }
-    .suggestion-weakness {
-        border-color: #ef4444;
-        background: linear-gradient(90deg, rgba(239, 68, 68, 0.1) 0%, rgba(15, 23, 42, 0.3) 100%);
-    }
-    .suggestion-trend {
-        border-color: #3b82f6;
-        background: linear-gradient(90deg, rgba(59, 130, 246, 0.1) 0%, rgba(15, 23, 42, 0.3) 100%);
-    }
-    .suggestion-conclusion {
-        border-color: #8b5cf6;
-        background: linear-gradient(90deg, rgba(139, 92, 246, 0.1) 0%, rgba(15, 23, 42, 0.3) 100%);
-    }
-    .suggestion-title {
-        font-weight: 600;
-        font-size: 0.9rem;
-        margin-bottom: 0.3rem;
-        color: #e2e8f0;
-    }
-    .suggestion-text {
-        color: #cbd5e1;
-        line-height: 1.5;
-        font-size: 0.85rem;
-    }
-    .data-basis {
-        color: #64748b;
-        font-size: 0.75rem;
-        margin-top: 0.2rem;
-    }
-    /* 侧边栏 */
-    .stSidebar {
-        background: linear-gradient(180deg, #0f172a 0%, #1e293b 100%);
-        border-right: 1px solid rgba(0, 212, 255, 0.15);
-    }
-    .stSidebar [data-testid="stMarkdownContainer"] h2 {
-        color: #e2e8f0;
-        font-size: 1.2rem;
-        margin-bottom: 0.8rem;
-        padding-bottom: 0.4rem;
-        border-bottom: 2px solid #00d4ff;
-    }
-    .stSidebar [data-testid="stMarkdownContainer"] h4 {
-        color: #00d4ff;
-        margin-top: 0.8rem;
-        margin-bottom: 0.4rem;
-        font-size: 0.95rem;
-    }
-    /* 按钮 */
-    .stButton > button {
-        border-radius: 10px;
-        border: 1px solid rgba(0, 212, 255, 0.4);
-        background: linear-gradient(135deg, rgba(0, 212, 255, 0.15) 0%, rgba(59, 130, 246, 0.2) 100%);
-        color: #e2e8f0;
-        font-weight: 500;
-        transition: all 0.3s ease;
-        backdrop-filter: blur(10px);
-    }
-    .stButton > button:hover {
-        background: linear-gradient(135deg, rgba(0, 212, 255, 0.3) 0%, rgba(59, 130, 246, 0.35) 100%);
-        box-shadow: 0 0 20px rgba(0, 212, 255, 0.3);
-        transform: translateY(-1px);
-        border-color: rgba(0, 212, 255, 0.6);
-    }
-    /* 页脚 */
-    .footer {
-        text-align: center;
-        margin-top: 2rem;
-        padding: 1.2rem 0;
-        color: #64748b;
-        border-top: 1px solid rgba(0, 212, 255, 0.15);
-        font-size: 0.8rem;
-        line-height: 1.6;
-    }
-    /* 标签页 */
-    .stTabs [data-baseweb="tab-list"] {
-        gap: 1.5rem;
-        border-bottom: 1px solid rgba(0, 212, 255, 0.2);
-    }
-    .stTabs [data-baseweb="tab"] {
-        color: #94a3b8;
-    }
-    .stTabs [aria-selected="true"] {
-        color: #00d4ff;
-        border-bottom: 2px solid #00d4ff;
-    }
-    /* 展开器 */
-    .streamlit-expanderHeader {
-        background: linear-gradient(90deg, rgba(30, 41, 59, 0.8) 0%, rgba(15, 23, 42, 0.6) 100%);
-        color: #e2e8f0;
-        border-radius: 10px;
-        border: 1px solid rgba(0, 212, 255, 0.15);
-    }
-    .streamlit-expanderContent {
-        background: rgba(15, 23, 42, 0.5);
-        border-radius: 0 0 10px 10px;
-    }
-    /* 新手引导 */
-    .guide-box {
-        background: linear-gradient(135deg, rgba(0, 212, 255, 0.1) 0%, rgba(139, 92, 246, 0.1) 100%);
-        border: 1px solid rgba(0, 212, 255, 0.3);
-        border-radius: 16px;
-        padding: 1.2rem;
-        margin: 0.8rem 0;
-    }
-    .guide-step {
-        display: flex;
-        align-items: flex-start;
-        gap: 0.8rem;
-        margin: 0.6rem 0;
-        padding: 0.6rem;
-        background: rgba(15, 23, 42, 0.5);
-        border-radius: 10px;
-        border-left: 3px solid #00d4ff;
-    }
-    .guide-step-num {
-        background: linear-gradient(135deg, #00d4ff, #3b82f6);
-        color: white;
-        width: 28px;
-        height: 28px;
-        border-radius: 50%;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-weight: 700;
-        font-size: 0.85rem;
-        flex-shrink: 0;
-    }
-    .guide-step-text {
-        color: #cbd5e1;
-        font-size: 0.9rem;
-        line-height: 1.5;
-    }
-    /* 数据表格 */
-    .stDataFrame {
-        background: rgba(15, 23, 42, 0.5);
-    }
-    /* 滑块和选择器 */
-    .stSlider > div > div > div {
-        background: linear-gradient(90deg, #00d4ff, #3b82f6);
-    }
-    /* 多选框 */
-    .stMultiSelect span[data-baseweb="tag"] {
-        background: linear-gradient(135deg, rgba(0, 212, 255, 0.2), rgba(59, 130, 246, 0.2));
-        border: 1px solid rgba(0, 212, 255, 0.3);
-        color: #e2e8f0;
-    }
-    /* 单选按钮 */
-    .stRadio > div > label > div[data-testid="stMarkdownContainer"] {
-        color: #e2e8f0;
-    }
-    /* 信息提示 */
-    .stAlert {
-        background: linear-gradient(135deg, rgba(59, 130, 246, 0.15) 0%, rgba(139, 92, 246, 0.1) 100%);
-        border: 1px solid rgba(59, 130, 246, 0.3);
-        color: #e2e8f0;
-    }
-    /* 加载动画 */
-    .stSpinner > div {
-        border-color: #00d4ff;
-        border-top-color: transparent;
-    }
-</style>
-""", unsafe_allow_html=True)
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;700&display=swap');
 
-# ===================== 核心工具函数 =====================
-def generate_bubble_scatter(df_latest, selected_years, metric_unit):
-    """生成省份规模-增速气泡图（替代词云图）"""
-    if df_latest is None or len(df_latest) == 0:
-        return None
+.main .block-container {
+    padding-top: 2rem; padding-bottom: 3rem;
+    max-width: 1440px; margin: 0 auto;
+    background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+    border-radius: 16px;
+    box-shadow: 0 4px 24px rgba(0,0,0,0.06);
+}
+
+.hero-title { text-align: center; padding: 30px 0 10px; }
+.hero-title h1 {
+    font-size: 2.5rem; font-weight: 700;
+    background: linear-gradient(135deg, #1e40af 0%, #3b82f6 50%, #06b6d4 100%);
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    background-clip: text; margin-bottom: 8px;
+}
+.hero-title p { color: #64748b; font-size: 1rem; letter-spacing: 1px; }
+
+.sidebar-header {
+    background: linear-gradient(135deg, #1e40af 0%, #3b82f6 100%);
+    color: white; padding: 18px 15px; border-radius: 12px;
+    margin-bottom: 20px; text-align: center;
+    box-shadow: 0 4px 12px rgba(30,64,175,0.3);
+}
+
+.stButton > button {
+    background: linear-gradient(135deg, #1e40af 0%, #3b82f6 100%);
+    color: white; border: none; border-radius: 10px;
+    font-weight: 600; padding: 12px 24px;
+    transition: all 0.3s ease;
+    box-shadow: 0 4px 12px rgba(30,64,175,0.3); width: 100%;
+}
+.stButton > button:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(30,64,175,0.4);
+}
+
+.advice-box {
+    background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%);
+    padding: 24px; border-radius: 12px;
+    border-left: 5px solid #1e40af; margin: 15px 0;
+    box-shadow: 0 2px 8px rgba(30,64,175,0.1);
+}
+.risk-box {
+    background: linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%);
+    padding: 20px; border-radius: 12px;
+    border-left: 5px solid #dc2626; margin: 10px 0;
+    box-shadow: 0 2px 8px rgba(220,38,38,0.1);
+}
+.info-box {
+    background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%);
+    padding: 20px; border-radius: 12px;
+    border-left: 5px solid #16a34a; margin: 10px 0;
+    box-shadow: 0 2px 8px rgba(22,163,74,0.1);
+}
+.valuation-box {
+    background: linear-gradient(135deg, #fefce8 0%, #fef9c3 100%);
+    padding: 20px; border-radius: 12px;
+    border-left: 5px solid #f59e0b; margin: 10px 0;
+    box-shadow: 0 2px 8px rgba(245,158,11,0.1);
+}
+.factor-box {
+    background: linear-gradient(135deg, #f5f3ff 0%, #ede9fe 100%);
+    padding: 20px; border-radius: 12px;
+    border-left: 5px solid #8b5cf6; margin: 10px 0;
+    box-shadow: 0 2px 8px rgba(139,92,246,0.1);
+}
+
+hr, .stDivider {
+    border: none; height: 2px;
+    background: linear-gradient(90deg, transparent 0%, #cbd5e1 50%, transparent 100%);
+    margin: 30px 0;
+}
+
+.stTabs [data-baseweb="tab-list"] {
+    gap: 8px; background: #f1f5f9;
+    padding: 8px; border-radius: 12px;
+}
+.stTabs [data-baseweb="tab"] {
+    border-radius: 8px; padding: 10px 20px; font-weight: 500;
+}
+.stTabs [aria-selected="true"] {
+    background: white; box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+}
+
+#MainMenu {visibility: hidden;}
+footer {visibility: hidden;}
+header {visibility: hidden;}
+</style>
+"""
+st.markdown(custom_css, unsafe_allow_html=True)
+
+# ===================== 行业分类映射 =====================
+INDUSTRY_CATEGORIES = {
+    "金融": ["银行", "保险", "证券", "多元金融", "信托", "期货", "金融"],
+    "消费": ["白酒", "食品", "饮料", "家电", "零售", "服装", "化妆品", "旅游", "酒店", "消费"],
+    "医药": ["医药", "生物", "医疗器械", "医疗服务", "中药", "化学制药", "医疗保健"],
+    "科技": ["半导体", "电子", "软件", "计算机", "通信", "互联网", "人工智能", "科技"],
+    "新能源": ["光伏", "风电", "锂电池", "新能源汽车", "储能", "氢能", "新能源"],
+    "制造": ["机械", "汽车", "军工", "航空航天", "船舶", "重工", "制造"],
+    "材料": ["化工", "钢铁", "有色", "建材", "造纸", "塑料", "橡胶", "材料"],
+    "基建": ["建筑", "房地产", "工程", "水泥", "基建"],
+    "能源": ["煤炭", "石油", "天然气", "电力", "公用事业", "能源"],
+    "物流": ["交通运输", "物流", "港口", "航运", "航空", "物流"]
+}
+
+
+def classify_industry(industry_name):
+    if not industry_name:
+        return "其他"
+    industry_name = str(industry_name)
+    for category, keywords in INDUSTRY_CATEGORIES.items():
+        for kw in keywords:
+            if kw in industry_name:
+                return category
+    return "其他"
+
+
+# ===================== 内置沪深300成分股兜底列表 =====================
+# 键使用字符串格式，避免0开头的整数被解释为八进制
+FALLBACK_HS300 = {
+    "600519": "贵州茅台", "600036": "招商银行", "601318": "中国平安", "000858": "五粮液",
+    "600900": "长江电力", "601012": "隆基绿能", "002594": "比亚迪", "600276": "恒瑞医药",
+    "000333": "美的集团", "601888": "中国中免", "300750": "宁德时代", "601398": "工商银行",
+    "601288": "农业银行", "601939": "建设银行", "601988": "中国银行", "600030": "中信证券",
+    "600887": "伊利股份", "000568": "泸州老窖", "000001": "平安银行", "600809": "山西汾酒",
+    "002415": "海康威视", "601166": "兴业银行", "600309": "万华化学", "601899": "紫金矿业",
+    "300059": "东方财富", "601668": "中国建筑", "603259": "药明康德", "002352": "顺丰控股",
+    "600436": "片仔癀", "601088": "中国神华", "002714": "牧原股份", "601225": "陕西煤业",
+    "600031": "三一重工", "000002": "万科A", "600048": "保利发展", "601728": "中国电信",
+    "002230": "科大讯飞", "601857": "中国石油", "600028": "中国石化", "601728": "中国电信",
+    "300760": "迈瑞医疗", "603288": "海天味业", "600438": "通威股份", "002142": "宁波银行",
+    "601601": "中国太保", "601628": "中国人寿", "601668": "中国建筑", "601766": "中国中车",
+    "601390": "中国中铁", "601186": "中国铁建", "601800": "中国交建", "601618": "中国中冶",
+    "601669": "中国电建", "601117": "中国化学", "601868": "中国能建", "601618": "中国中冶",
+    "601989": "中国重工", "601727": "上海电气", "600089": "特变电工", "601179": "中国西电",
+    "601877": "正泰电器", "600406": "国电南瑞", "601126": "四方股份", "600312": "平高电气",
+    "600550": "保变电气", "600268": "国电南自", "600885": "宏发股份", "002028": "思源电气",
+    "002074": "国轩高科", "300014": "亿纬锂能", "002709": "天赐材料", "002460": "赣锋锂业",
+    "603799": "华友钴业", "300433": "蓝思科技", "002475": "立讯精密", "000725": "京东方A",
+    "601138": "工业富联", "002241": "歌尔股份", "603501": "韦尔股份", "688981": "中芯国际",
+    "600584": "长电科技", "002371": "北方华创", "603893": "瑞芯微", "300782": "卓胜微",
+    "688012": "中微公司", "688008": "澜起科技", "603986": "兆易创新", "300661": "圣邦股份",
+    "688396": "华润微", "688981": "中芯国际", "600703": "三安光电", "002049": "紫光国微",
+    "300223": "北京君正", "603160": "汇顶科技", "688536": "思瑞浦", "300408": "三环集团",
+    "300433": "蓝思科技", "000063": "中兴通讯", "600498": "烽火通信", "600487": "亨通光电",
+    "002281": "光迅科技", "300308": "中际旭创", "000938": "中芯国际", "600745": "闻泰科技",
+    "002156": "通富微电", "600460": "士兰微", "300373": "扬杰科技", "002185": "华天科技",
+    "603005": "晶方科技", "300046": "台基股份", "300623": "捷捷微电", "300373": "扬杰科技",
+    "600460": "士兰微", "300223": "北京君正", "603893": "瑞芯微", "688595": "芯海科技",
+    "688608": "恒玄科技", "688099": "晶晨股份", "688385": "复旦微电", "688123": "聚辰股份",
+    "688019": "安集科技", "688126": "沪硅产业", "300666": "江丰电子", "688200": "华峰测控",
+    "688012": "中微公司", "688082": "盛美上海", "688072": "拓荆科技", "688037": "芯源微",
+    "688120": "华海清科", "688409": "富创精密", "688361": "中科飞测", "688147": "微导纳米",
+    "688502": "茂莱光学", "688103": "国力股份", "688072": "拓荆科技", "688120": "华海清科",
+}
+
+
+# ===================== 数据获取函数（带重试和容错） =====================
+def safe_ak_call(func, max_retries=3, *args, **kwargs):
+    """带重试机制的akshare调用"""
+    for attempt in range(max_retries):
+        try:
+            result = func(*args, **kwargs)
+            if result is not None and (isinstance(result, pd.DataFrame) and not result.empty):
+                return result
+            if attempt < max_retries - 1:
+                time.sleep(random.uniform(1.5, 3.0))
+        except Exception as e:
+            if attempt < max_retries - 1:
+                time.sleep(random.uniform(1.5, 3.0))
+            else:
+                return None
+    return None
+
+
+@st.cache_data(ttl=1800, show_spinner="正在获取沪深300成分股列表...")
+def get_hs300_constituents():
+    """获取沪深300成分股列表，带多重备用方案"""
+    errors = []
+
+    # 方案1: 使用 index_stock_cons
     try:
-        # 计算每个省份的增速
-        year_span = selected_years[1] - selected_years[0]
-        cagr_data = []
-        for prov in df_latest["地区"].unique():
-            prov_data = df_latest[df_latest["地区"] == prov].sort_values("年份")
-            if len(prov_data) >= 2:
-                s_val = prov_data.iloc[0]["指标值"]
-                e_val = prov_data.iloc[-1]["指标值"]
-                cagr = safe_cagr(s_val, e_val, year_span)
-                latest_val = prov_data.iloc[-1]["指标值"]
-                cagr_data.append({
-                    "地区": prov,
-                    "最新值": latest_val,
-                    "年均增速": cagr,
-                    "规模等级": "大型" if latest_val > df_latest["指标值"].quantile(0.75) else
-                               "中型" if latest_val > df_latest["指标值"].quantile(0.25) else "小型"
-                })
-        if len(cagr_data) < 3:
-            return None
-        df_bubble = pd.DataFrame(cagr_data)
-        fig = px.scatter(
-            df_bubble, x="最新值", y="年均增速", size="最新值", color="规模等级",
-            hover_name="地区", text="地区",
-            color_discrete_map={"大型": "#00d4ff", "中型": "#3b82f6", "小型": "#8b5cf6"},
-            template="plotly_dark",
-            labels={"最新值": f"最新规模 ({metric_unit})", "年均增速": "年均增速"}
-        )
-        fig.update_traces(textposition="top center", textfont=dict(size=10, color="#e2e8f0"))
-        fig.add_hline(y=0, line_dash="dash", line_color="gray")
-        fig.update_layout(
-            height=420,
-            legend=dict(orientation="h", yanchor="bottom", y=-0.25, xanchor="center", x=0.5, font_color="#e2e8f0"),
-            margin=dict(l=10, r=10, t=10, b=10),
-            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-            font=dict(color="#e2e8f0")
-        )
-        return fig
+        df = ak.index_stock_cons(symbol="000300")
+        code_col = "品种代码" if "品种代码" in df.columns else "code"
+        name_col = "品种名称" if "品种名称" in df.columns else "code_name"
+        df["纯代码"] = df[code_col].apply(lambda x: re.sub(r"^(sh\.|sz\.)", "", str(x)))
+        df["纯代码"] = df["纯代码"].astype(str).str.strip()
+        df = df[df["纯代码"].str.len() == 6]
+        code2name = dict(zip(df["纯代码"], df[name_col].astype(str)))
+        if len(code2name) >= 100:
+            return code2name, f"成功获取沪深300成分股，共 {len(code2name)} 只"
+    except Exception as e:
+        errors.append(f"index_stock_cons 失败: {e}")
+
+    # 方案2: 使用 index_stock_cons_sina
+    try:
+        df = ak.index_stock_cons_sina(symbol="000300")
+        if "code" in df.columns:
+            df["纯代码"] = df["code"].astype(str).str.strip()
+        elif "品种代码" in df.columns:
+            df["纯代码"] = df["品种代码"].astype(str).str.strip()
+        else:
+            df["纯代码"] = df.iloc[:, 0].astype(str).str.strip()
+        df = df[df["纯代码"].str.len() == 6]
+        code2name = dict(zip(df["纯代码"], df.get("name", df.get("code_name", df.iloc[:, 1])).astype(str)))
+        if len(code2name) >= 100:
+            return code2name, f"通过备用接口获取沪深300成分股，共 {len(code2name)} 只"
+    except Exception as e:
+        errors.append(f"index_stock_cons_sina 失败: {e}")
+
+    # 方案3: 使用 stock_zh_a_spot_em 获取全市场数据并筛选
+    try:
+        all_spot = ak.stock_zh_a_spot_em()
+        if not all_spot.empty and "代码" in all_spot.columns:
+            # 使用内置列表作为筛选依据
+            filtered = all_spot[all_spot["代码"].isin(FALLBACK_HS300.keys())]
+            code2name = {}
+            for _, row in filtered.iterrows():
+                try:
+                    code = str(row["代码"])
+                    name = str(row.get("名称", FALLBACK_HS300.get(code, "未知")))
+                    code2name[code] = name
+                except:
+                    pass
+            if len(code2name) >= 50:
+                return code2name, f"通过实时行情接口获取，共 {len(code2name)} 只"
+    except Exception as e:
+        errors.append(f"stock_zh_a_spot_em 失败: {e}")
+
+    # 方案4: 使用内置兜底列表
+    st.warning(f"在线接口均不可用，使用内置沪深300成分股列表。错误: {'; '.join(errors[:2])}")
+    return FALLBACK_HS300.copy(), f"使用内置沪深300成分股列表，共 {len(FALLBACK_HS300)} 只"
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def get_stock_individual_info(symbol):
+    try:
+        df = ak.stock_individual_info_em(symbol=symbol)
+        return dict(zip(df["item"], df["value"]))
+    except Exception:
+        return {}
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def get_stock_financial_indicators(symbol):
+    try:
+        return ak.stock_financial_analysis_indicator_em(symbol=symbol)
     except Exception:
         return None
 
-def safe_cagr(start_val: float, end_val: float, years: int) -> float:
-    if start_val <= 0 or end_val <= 0 or years <= 0:
-        return 0.0
+
+def get_stock_history_data(stock_code, stock_name, start_date, end_date):
+    """获取单只股票历史日线数据，带重试和备用方案"""
+    code_str = str(stock_code).zfill(6)
+    start_fmt = start_date.replace("-", "")
+    end_fmt = end_date.replace("-", "")
+
+    # 方案1: stock_zh_a_hist (东方财富)
     try:
-        return (end_val / start_val) ** (1 / years) - 1
-    except:
-        return 0.0
+        df = safe_ak_call(ak.stock_zh_a_hist, max_retries=2,
+                          symbol=code_str, period="daily",
+                          start_date=start_fmt, end_date=end_fmt, adjust="qfq")
+        if df is not None and not df.empty and len(df) >= 20:
+            df = df.rename(columns={
+                "日期": "日期", "开盘": "开盘", "收盘": "收盘",
+                "最高": "最高", "最低": "最低", "成交量": "成交量",
+                "成交额": "成交额", "振幅": "振幅", "涨跌额": "涨跌额",
+                "换手率": "换手率", "涨跌幅": "涨跌幅"
+            })
+            df["股票代码"] = stock_code
+            df["股票名称"] = stock_name
+            df["日期"] = pd.to_datetime(df["日期"])
+            for col in ["开盘", "收盘", "最高", "最低", "成交量", "成交额", "振幅", "涨跌额", "换手率", "涨跌幅"]:
+                if col in df.columns:
+                    df[col] = pd.to_numeric(df[col], errors="coerce")
+            df = df.dropna(subset=["日期", "开盘", "收盘", "最高", "最低"])
+            df = df.sort_values("日期").reset_index(drop=True)
+            return df
+    except Exception:
+        pass
 
-def parse_indicator_name(col_name: str):
-    match = re.search(r'(.+)\(([^)]+)\)$', col_name)
-    if match:
-        return match.group(1).strip(), match.group(2).strip()
-    return col_name.strip(), ""
-
-def get_image_base64(path: str) -> str:
+    # 方案2: stock_zh_a_daily (新浪财经)
     try:
-        with open(path, "rb") as f:
-            return base64.b64encode(f.read()).decode()
-    except:
-        return ""
+        prefix = "sh" if code_str.startswith("6") else "sz"
+        df = safe_ak_call(ak.stock_zh_a_daily, max_retries=2,
+                          symbol=f"{prefix}{code_str}", start_date=start_date, end_date=end_date, adjust="qfq")
+        if df is not None and not df.empty and len(df) >= 20:
+            df = df.rename(columns={
+                "date": "日期", "open": "开盘", "close": "收盘",
+                "high": "最高", "low": "最低", "volume": "成交量",
+                "amount": "成交额", "amplitude": "振幅", "pct_change": "涨跌幅",
+                "change": "涨跌额", "turnover": "换手率"
+            })
+            df["股票代码"] = stock_code
+            df["股票名称"] = stock_name
+            df["日期"] = pd.to_datetime(df["日期"])
+            for col in ["开盘", "收盘", "最高", "最低", "成交量", "成交额", "振幅", "涨跌额", "换手率", "涨跌幅"]:
+                if col in df.columns:
+                    df[col] = pd.to_numeric(df[col], errors="coerce")
+            df = df.dropna(subset=["日期", "开盘", "收盘", "最高", "最低"])
+            df = df.sort_values("日期").reset_index(drop=True)
+            return df
+    except Exception:
+        pass
 
-def generate_html_report(analysis_mode, selected_years, selected_provinces,
-                        selected_metric, selected_metrics, df_filtered, df_full, metric_unit,
-                        latest_year, avg_val=None, national_avg=None, max_val=None,
-                        cv_val=None, total_cagr=None, detail_list=None, above_avg_count=None):
-    now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    return None
 
-    html_head = f"""<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>中国省级数据库2025版 - 分析报告</title>
-    <style>
-        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;600;700&display=swap');
-        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
-        body {{
-            font-family: 'Noto Sans SC', 'Microsoft YaHei', sans-serif;
-            background: linear-gradient(135deg, #0a1628 0%, #0f172a 50%, #1e293b 100%);
-            color: #e2e8f0;
-            line-height: 1.6;
-        }}
-        .container {{
-            max-width: 1200px;
-            margin: 0 auto;
-            padding: 2rem;
-        }}
-        .header {{
-            text-align: center;
-            padding: 2.5rem 0;
-            background: linear-gradient(135deg, rgba(0, 212, 255, 0.2) 0%, rgba(59, 130, 246, 0.2) 50%, rgba(139, 92, 246, 0.2) 100%);
-            border: 1px solid rgba(0, 212, 255, 0.3);
-            color: white;
-            border-radius: 16px;
-            margin-bottom: 2rem;
-            box-shadow: 0 10px 40px rgba(0, 212, 255, 0.1);
-        }}
-        .header h1 {{ font-size: 2rem; font-weight: 700; margin-bottom: 0.5rem; background: linear-gradient(135deg, #00d4ff, #3b82f6); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }}
-        .header p {{ font-size: 1rem; opacity: 0.8; color: #94a3b8; }}
-        .meta-info {{
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 1rem;
-            margin-bottom: 2rem;
-        }}
-        .meta-card {{
-            background: linear-gradient(135deg, rgba(30, 41, 59, 0.8) 0%, rgba(15, 23, 42, 0.9) 100%);
-            padding: 1.2rem;
-            border-radius: 12px;
-            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
-            border: 1px solid rgba(0, 212, 255, 0.2);
-            border-left: 4px solid #00d4ff;
-        }}
-        .meta-label {{ font-size: 0.85rem; color: #94a3b8; margin-bottom: 0.3rem; }}
-        .meta-value {{ font-size: 1.1rem; font-weight: 600; color: #00d4ff; }}
-        .section {{
-            background: linear-gradient(135deg, rgba(30, 41, 59, 0.7) 0%, rgba(15, 23, 42, 0.85) 100%);
-            border-radius: 14px;
-            padding: 1.8rem;
-            margin-bottom: 1.5rem;
-            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
-            border: 1px solid rgba(59, 130, 246, 0.15);
-        }}
-        .section h2 {{
-            font-size: 1.3rem;
-            color: #e2e8f0;
-            margin-bottom: 1.2rem;
-            padding-bottom: 0.5rem;
-            border-bottom: 2px solid transparent;
-            border-image: linear-gradient(90deg, #00d4ff, #3b82f6, transparent) 1;
-        }}
-        .stats-grid {{
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-            gap: 1rem;
-            margin: 1rem 0;
-        }}
-        .stat-box {{
-            background: linear-gradient(135deg, rgba(0, 212, 255, 0.1) 0%, rgba(15, 23, 42, 0.3) 100%);
-            padding: 1.2rem;
-            border-radius: 10px;
-            text-align: center;
-            border: 1px solid rgba(0, 212, 255, 0.2);
-        }}
-        .stat-box .number {{ font-size: 1.6rem; font-weight: 700; color: #00d4ff; text-shadow: 0 0 10px rgba(0, 212, 255, 0.4); }}
-        .stat-box .label {{ font-size: 0.85rem; color: #94a3b8; margin-top: 0.3rem; }}
-        table {{
-            width: 100%;
-            border-collapse: collapse;
-            margin: 1rem 0;
-            font-size: 0.9rem;
-        }}
-        th, td {{
-            padding: 0.8rem;
-            text-align: left;
-            border-bottom: 1px solid rgba(59, 130, 246, 0.2);
-            color: #cbd5e1;
-        }}
-        th {{
-            background: linear-gradient(135deg, rgba(0, 212, 255, 0.2) 0%, rgba(59, 130, 246, 0.2) 100%);
-            color: #e2e8f0;
-            font-weight: 600;
-        }}
-        tr:hover {{ background: rgba(0, 212, 255, 0.05); }}
-        .rank-1 {{ background: linear-gradient(90deg, rgba(245, 158, 11, 0.15) 0%, transparent 100%); }}
-        .rank-2 {{ background: linear-gradient(90deg, rgba(148, 163, 184, 0.1) 0%, transparent 100%); }}
-        .rank-3 {{ background: linear-gradient(90deg, rgba(251, 146, 60, 0.1) 0%, transparent 100%); }}
-        .badge {{
-            display: inline-block;
-            padding: 0.2rem 0.6rem;
-            border-radius: 20px;
-            font-size: 0.8rem;
-            font-weight: 500;
-        }}
-        .badge-success {{ background: rgba(16, 185, 129, 0.2); color: #10b981; border: 1px solid rgba(16, 185, 129, 0.3); }}
-        .badge-warning {{ background: rgba(245, 158, 11, 0.2); color: #f59e0b; border: 1px solid rgba(245, 158, 11, 0.3); }}
-        .badge-danger {{ background: rgba(239, 68, 68, 0.2); color: #ef4444; border: 1px solid rgba(239, 68, 68, 0.3); }}
-        .suggestion {{
-            padding: 1rem 1.2rem;
-            border-radius: 8px;
-            margin: 0.6rem 0;
-            border-left: 4px solid;
-            background: rgba(15, 23, 42, 0.5);
-        }}
-        .sg-advantage {{ background: linear-gradient(90deg, rgba(16, 185, 129, 0.1) 0%, transparent 100%); border-color: #10b981; }}
-        .sg-weakness {{ background: linear-gradient(90deg, rgba(239, 68, 68, 0.1) 0%, transparent 100%); border-color: #ef4444; }}
-        .sg-trend {{ background: linear-gradient(90deg, rgba(59, 130, 246, 0.1) 0%, transparent 100%); border-color: #3b82f6; }}
-        .sg-conclusion {{ background: linear-gradient(90deg, rgba(139, 92, 246, 0.1) 0%, transparent 100%); border-color: #8b5cf6; }}
-        .footer {{
-            text-align: center;
-            padding: 2rem;
-            color: #64748b;
-            font-size: 0.85rem;
-            border-top: 1px solid rgba(0, 212, 255, 0.15);
-            margin-top: 2rem;
-        }}
-        .highlight {{ color: #00d4ff; font-weight: 600; }}
-        @media print {{
-            body {{ background: #0f172a; }}
-            .section {{ break-inside: avoid; }}
-        }}
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="header">
-            <h1>🇨🇳 中国省级数据库2025版</h1>
-            <p>可视化决策支持平台 - 数据分析报告</p>
-        </div>
 
-        <div class="meta-info">
-            <div class="meta-card">
-                <div class="meta-label">分析模式</div>
-                <div class="meta-value">{"省际对比分析" if "省际" in analysis_mode else "单省深度分析"}</div>
-            </div>
-            <div class="meta-card">
-                <div class="meta-label">时间区间</div>
-                <div class="meta-value">{selected_years[0]} - {selected_years[1]}年</div>
-            </div>
-            <div class="meta-card">
-                <div class="meta-label">覆盖省份</div>
-                <div class="meta-value">{len(selected_provinces)}个</div>
-            </div>
-            <div class="meta-card">
-                <div class="meta-label">生成时间</div>
-                <div class="meta-value">{now_str}</div>
-            </div>
-        </div>
-"""
+def fetch_all_hs300_data(code2name, start_date, end_date, progress_bar, status_text):
+    """批量获取沪深300成分股历史数据，带智能降速"""
+    all_data = []
+    total = len(code2name)
+    success = 0
+    failed = 0
+    failed_codes = []
 
-    html_body = ""
+    # 如果股票数量太多，只取前100只以保证稳定性
+    codes_to_fetch = list(code2name.items())[:100]
 
-    if "省际" in analysis_mode:
-        df_latest = df_filtered[df_filtered["年份"] == latest_year]
-        df_latest_sorted = df_latest.sort_values("指标值", ascending=False).reset_index(drop=True)
+    for i, (code, name) in enumerate(codes_to_fetch):
+        progress_bar.progress(min(i / len(codes_to_fetch), 0.99),
+                              text=f"正在获取: {name}({code}) [{i+1}/{len(codes_to_fetch)}]")
+        status_text.text(f"进度: {i+1}/{len(codes_to_fetch)} | 成功: {success} | 失败: {failed}")
 
-        html_body += f"""
-        <div class="section">
-            <h2>📊 核心统计摘要</h2>
-            <div class="stats-grid">
-                <div class="stat-box">
-                    <div class="number">{avg_val:,.2f}</div>
-                    <div class="label">省份均值{f" ({metric_unit})" if metric_unit else ""}</div>
-                </div>
-                <div class="stat-box">
-                    <div class="number">{national_avg:,.2f}</div>
-                    <div class="label">全国均值{f" ({metric_unit})" if metric_unit else ""}</div>
-                </div>
-                <div class="stat-box">
-                    <div class="number">{max_val:,.2f}</div>
-                    <div class="label">最高值{f" ({metric_unit})" if metric_unit else ""}</div>
-                </div>
-                <div class="stat-box">
-                    <div class="number">{cv_val:.1%}</div>
-                    <div class="label">省际离散度</div>
-                </div>
-                <div class="stat-box">
-                    <div class="number">{total_cagr:.2%}</div>
-                    <div class="label">整体年均增速</div>
-                </div>
-                <div class="stat-box">
-                    <div class="number">{selected_years[1]-selected_years[0]+1}</div>
-                    <div class="label">分析年度跨度</div>
-                </div>
-            </div>
-        </div>
+        df = get_stock_history_data(code, name, start_date, end_date)
+        if df is not None and len(df) >= 20:
+            all_data.append(df)
+            success += 1
+        else:
+            failed += 1
+            failed_codes.append(f"{name}({code})")
 
-        <div class="section">
-            <h2>🏆 省份排名 ({latest_year}年)</h2>
-            <table>
-                <thead>
-                    <tr>
-                        <th>排名</th>
-                        <th>省份</th>
-                        <th>指标值{f" ({metric_unit})" if metric_unit else ""}</th>
-                        <th>相对全国均值</th>
-                        <th>发展梯队</th>
-                    </tr>
-                </thead>
-                <tbody>
-"""
-        total_prov_count = df_full[df_full["年份"] == latest_year]["地区"].nunique()
-        for i, row in df_latest_sorted.iterrows():
-            rank = i + 1
-            prov = row["地区"]
-            val = row["指标值"]
-            vs_nat = val / national_avg if national_avg else 0
-            rank_pct = rank / total_prov_count if total_prov_count else 0
+        # 智能降速：每5只股票后增加随机延迟
+        if (i + 1) % 5 == 0:
+            time.sleep(random.uniform(1.0, 2.0))
+        else:
+            time.sleep(random.uniform(0.3, 0.8))
 
-            if rank_pct <= 0.25:
-                tier = "第一梯队"
-                tier_class = "badge-success"
-            elif rank_pct <= 0.5:
-                tier = "第二梯队"
-                tier_class = "badge-warning"
-            elif rank_pct <= 0.75:
-                tier = "第三梯队"
-                tier_class = "badge-warning"
+    progress_bar.progress(1.0, text="数据获取完成！")
+    status_text.text(f"获取完成: 成功 {success} 只, 失败 {failed} 只")
+
+    if failed > 0:
+        st.info(f"以下 {min(len(failed_codes), 10)} 只股票获取失败: {', '.join(failed_codes[:10])}")
+
+    if all_data:
+        combined_df = pd.concat(all_data, ignore_index=True)
+        combined_df = combined_df.sort_values(["股票代码", "日期"]).reset_index(drop=True)
+        return combined_df, f"数据获取完成 | 共 {success} 只股票 | {len(combined_df)} 条记录"
+    return None, "未能获取到有效数据"
+
+
+# ===================== 绝对估值法: DCF模型 =====================
+def calc_dcf_valuation(symbol, close_price, fin_df):
+    try:
+        revenue = 0
+        net_profit = 0
+        operating_cashflow = 0
+        total_assets = 0
+        total_equity = 0
+        total_liab = 0
+        roe = 0
+        debt_to_assets = 0
+
+        if fin_df is not None and not fin_df.empty:
+            for col in fin_df.columns:
+                col_str = str(col).lower()
+                if any(k in col_str for k in ["营业收入", "营业总收入", "revenue"]):
+                    try:
+                        revenue = float(fin_df[col].iloc[0])
+                    except:
+                        pass
+                if any(k in col_str for k in ["净利润", "归母净利润", "net profit"]):
+                    try:
+                        net_profit = float(fin_df[col].iloc[0])
+                    except:
+                        pass
+                if any(k in col_str for k in ["经营现金流", "经营活动现金流", "operating cash flow"]):
+                    try:
+                        operating_cashflow = float(fin_df[col].iloc[0])
+                    except:
+                        pass
+                if any(k in col_str for k in ["总资产", "资产总计"]):
+                    try:
+                        total_assets = float(fin_df[col].iloc[0])
+                    except:
+                        pass
+                if any(k in col_str for k in ["净资产", "所有者权益", "股东权益"]):
+                    try:
+                        total_equity = float(fin_df[col].iloc[0])
+                    except:
+                        pass
+                if any(k in col_str for k in ["总负债", "负债合计"]):
+                    try:
+                        total_liab = float(fin_df[col].iloc[0])
+                    except:
+                        pass
+                if "净资产收益率" in str(col) or "roe" in col_str:
+                    try:
+                        roe = float(fin_df[col].iloc[0])
+                    except:
+                        pass
+                if "资产负债率" in str(col):
+                    try:
+                        debt_to_assets = float(fin_df[col].iloc[0])
+                    except:
+                        pass
+
+        info = get_stock_individual_info(symbol)
+        total_shares = 0
+        try:
+            total_shares_str = str(info.get("总股本", "0")).replace(",", "").replace("万股", "").replace("亿", "")
+            total_shares = float(total_shares_str)
+            if total_shares > 1000000:
+                total_shares = total_shares / 10000
+        except:
+            total_shares = close_price * 100
+
+        if operating_cashflow != 0:
+            fcff = operating_cashflow * 0.7
+        elif net_profit != 0:
+            fcff = net_profit * 0.6
+        else:
+            fcff = close_price * total_shares * 0.05
+
+        risk_free_rate = 0.025
+        market_risk_premium = 0.06
+        beta = 1.0
+        cost_of_equity = risk_free_rate + beta * market_risk_premium
+
+        if debt_to_assets > 0:
+            debt_ratio = debt_to_assets / 100 if debt_to_assets > 1 else debt_to_assets
+        else:
+            debt_ratio = 0.4
+
+        cost_of_debt = 0.04
+        tax_rate = 0.25
+        wacc = cost_of_equity * (1 - debt_ratio) + cost_of_debt * (1 - tax_rate) * debt_ratio
+
+        if roe > 0:
+            growth_rate_high = min(roe / 100 * 0.5, 0.15)
+            growth_rate_stable = min(roe / 100 * 0.2, 0.03)
+        else:
+            growth_rate_high = 0.08
+            growth_rate_stable = 0.025
+
+        forecast_years = 5
+        fcff_list = []
+        pv_list = []
+        current_fcff = fcff
+
+        for year in range(1, forecast_years + 1):
+            current_fcff = current_fcff * (1 + growth_rate_high)
+            pv = current_fcff / ((1 + wacc) ** year)
+            fcff_list.append(current_fcff)
+            pv_list.append(pv)
+
+        pv_forecast = sum(pv_list)
+        terminal_fcff = fcff_list[-1] * (1 + growth_rate_stable)
+        terminal_value = terminal_fcff / (wacc - growth_rate_stable)
+        pv_terminal = terminal_value / ((1 + wacc) ** forecast_years)
+
+        enterprise_value = pv_forecast + pv_terminal
+
+        if total_liab > 0 and total_assets > 0:
+            cash = total_assets - total_liab - total_equity if total_equity > 0 else 0
+            net_debt = total_liab - max(cash, 0)
+        else:
+            net_debt = enterprise_value * 0.3
+
+        equity_value = enterprise_value - net_debt
+
+        if total_shares > 0:
+            intrinsic_value_per_share = equity_value / total_shares
+        else:
+            intrinsic_value_per_share = close_price
+
+        premium = (close_price - intrinsic_value_per_share) / intrinsic_value_per_share * 100
+
+        if premium < -20:
+            valuation = "严重低估"; color = "#16a34a"
+        elif premium < -5:
+            valuation = "低估"; color = "#22c55e"
+        elif premium < 5:
+            valuation = "合理"; color = "#f59e0b"
+        elif premium < 20:
+            valuation = "高估"; color = "#f97316"
+        else:
+            valuation = "严重高估"; color = "#dc2626"
+
+        return {
+            "内在价值": round(intrinsic_value_per_share, 2),
+            "当前价格": round(close_price, 2),
+            "估值溢价": round(premium, 2),
+            "估值判断": valuation,
+            "估值颜色": color,
+            "企业价值": round(enterprise_value / 100000000, 2),
+            "股权价值": round(equity_value / 100000000, 2),
+            "WACC": round(wacc * 100, 2),
+            "高增长期增长率": round(growth_rate_high * 100, 2),
+            "永续增长率": round(growth_rate_stable * 100, 2),
+            "预测期FCFF现值": round(pv_forecast / 100000000, 2),
+            "终值现值": round(pv_terminal / 100000000, 2),
+            "FCFF": round(fcff / 100000000, 2),
+            "ROE": round(roe, 2) if roe else "N/A",
+            "净利润": round(net_profit / 100000000, 2) if net_profit else "N/A",
+            "经营现金流": round(operating_cashflow / 100000000, 2) if operating_cashflow else "N/A",
+        }
+    except Exception:
+        pass
+
+    return {
+        "内在价值": round(close_price, 2), "当前价格": round(close_price, 2),
+        "估值溢价": 0, "估值判断": "数据不足", "估值颜色": "#64748b",
+        "企业价值": "N/A", "股权价值": "N/A", "WACC": "N/A",
+        "高增长期增长率": "N/A", "永续增长率": "N/A",
+        "预测期FCFF现值": "N/A", "终值现值": "N/A",
+        "FCFF": "N/A", "ROE": "N/A", "净利润": "N/A", "经营现金流": "N/A"
+    }
+
+
+# ===================== 绝对估值法: DDM模型 =====================
+def calc_ddm_valuation(close_price, fin_df):
+    try:
+        if fin_df is not None and not fin_df.empty:
+            eps = 0; roe = 0; pe = 0; pb = 0; dividend_yield = 0
+            for col in fin_df.columns:
+                col_str = str(col).lower()
+                if "每股收益" in str(col) or "eps" in col_str:
+                    try:
+                        eps = float(fin_df[col].iloc[0])
+                    except:
+                        pass
+                if "净资产收益率" in str(col) or "roe" in col_str:
+                    try:
+                        roe = float(fin_df[col].iloc[0])
+                    except:
+                        pass
+                if "市盈率" in str(col) or "pe" in col_str:
+                    try:
+                        pe = float(fin_df[col].iloc[0])
+                    except:
+                        pass
+                if "市净率" in str(col) or "pb" in col_str:
+                    try:
+                        pb = float(fin_df[col].iloc[0])
+                    except:
+                        pass
+                if "股息率" in str(col) or "dividend" in col_str:
+                    try:
+                        dividend_yield = float(fin_df[col].iloc[0])
+                    except:
+                        pass
+
+            if eps <= 0 and pe > 0:
+                eps = close_price / pe
+            if eps <= 0:
+                eps = close_price * 0.05
+
+            payout_ratio = 0.30
+            dps = eps * payout_ratio
+
+            risk_free_rate = 0.025
+            market_risk_premium = 0.06
+            beta = 1.0
+            r = risk_free_rate + beta * market_risk_premium
+
+            if roe > 0:
+                g = roe / 100 * (1 - payout_ratio)
             else:
-                tier = "第四梯队"
-                tier_class = "badge-danger"
+                g = 0.03
+            g = min(g, r * 0.8)
 
-            rank_class = ""
-            if rank == 1: rank_class = "rank-1"
-            elif rank == 2: rank_class = "rank-2"
-            elif rank == 3: rank_class = "rank-3"
-
-            html_body += f"""
-                    <tr class="{rank_class}">
-                        <td><strong>#{rank}</strong></td>
-                        <td>{prov}</td>
-                        <td>{val:,.2f}</td>
-                        <td>{vs_nat:.1%}</td>
-                        <td><span class="badge {tier_class}">{tier}</span></td>
-                    </tr>
-"""
-
-        html_body += """
-                </tbody>
-            </table>
-        </div>
-
-        <div class="section">
-            <h2>💡 分省诊断与发展建议</h2>
-"""
-        for i, row in df_latest_sorted.head(10).iterrows():
-            rank = i + 1
-            prov = row["地区"]
-            val = row["指标值"]
-            vs_nat = val / national_avg if national_avg else 0
-
-            prov_data = df_filtered[df_filtered["地区"] == prov].sort_values("年份")
-            if len(prov_data) >= 2:
-                s_val = prov_data.iloc[0]["指标值"]
-                e_val = prov_data.iloc[-1]["指标值"]
-                span = int(prov_data.iloc[-1]["年份"] - prov_data.iloc[0]["年份"])
-                cagr = safe_cagr(s_val, e_val, span)
+            if r > g and dps > 0:
+                intrinsic_value = dps * (1 + g) / (r - g)
             else:
-                cagr = 0
+                intrinsic_value = close_price
 
-            suggestions = []
-            if vs_nat < 0.8:
-                suggestions.append(f"<strong>补短板</strong>：当前指标仅为全国均值的{vs_nat:.0%}，需加大核心要素投入")
-            if cagr < 0.03:
-                suggestions.append("<strong>增动能</strong>：增长速度偏低，需培育新增长引擎")
-            if rank <= total_prov_count * 0.25:
-                suggestions.append("<strong>固优势</strong>：保持全国领先地位，发挥示范引领作用")
-            elif rank <= total_prov_count * 0.5:
-                suggestions.append("<strong>促提升</strong>：向第一梯队省份对标学习，突破瓶颈制约")
-            suggestions.append("<strong>区域协同</strong>：加强与周边省份的产业协作与要素流动")
+            premium = (close_price - intrinsic_value) / intrinsic_value * 100
 
-            html_body += f"""
-            <div style="margin: 1rem 0; padding: 1rem; background: rgba(15, 23, 42, 0.5); border-radius: 8px; border: 1px solid rgba(0, 212, 255, 0.15);">
-                <h4 style="color: #00d4ff; margin-bottom: 0.5rem;">📍 {prov} | 全国第{rank}名</h4>
-                <p style="color: #cbd5e1;">指标值：<span class="highlight">{val:,.2f} {metric_unit}</span> |
-                   相对全国均值：<span class="highlight">{vs_nat:.1%}</span> |
-                   年均增速：<span class="highlight">{cagr:.2%}</span></p>
-                <ul style="margin-top: 0.5rem; padding-left: 1.2rem; color: #cbd5e1;">
-"""
-            for s in suggestions:
-                html_body += f"                    <li>{s}</li>\n"
-            html_body += "                </ul>\n            </div>\n"
+            if premium < -20:
+                valuation = "严重低估"; color = "#16a34a"
+            elif premium < -5:
+                valuation = "低估"; color = "#22c55e"
+            elif premium < 5:
+                valuation = "合理"; color = "#f59e0b"
+            elif premium < 20:
+                valuation = "高估"; color = "#f97316"
+            else:
+                valuation = "严重高估"; color = "#dc2626"
 
-        html_body += "</div>"
-    else:
-        prov_name = selected_provinces[0]
+            return {
+                "内在价值": round(intrinsic_value, 2),
+                "当前价格": round(close_price, 2),
+                "估值溢价": round(premium, 2),
+                "估值判断": valuation,
+                "估值颜色": color,
+                "每股股利": round(dps, 3),
+                "折现率": round(r * 100, 2),
+                "永续增长率": round(g * 100, 2),
+                "ROE": round(roe, 2) if roe else "N/A",
+                "EPS": round(eps, 2) if eps else "N/A",
+                "PE": round(pe, 2) if pe else "N/A",
+                "PB": round(pb, 2) if pb else "N/A",
+                "股息率": round(dividend_yield, 2) if dividend_yield else "N/A"
+            }
+    except Exception:
+        pass
 
-        html_body += f"""
-        <div class="section">
-            <h2>📊 综合发展概览 - {prov_name}</h2>
-            <div class="stats-grid">
-                <div class="stat-box">
-                    <div class="number">{len(selected_metrics)}</div>
-                    <div class="label">分析指标数</div>
-                </div>
-                <div class="stat-box">
-                    <div class="number">{above_avg_count}</div>
-                    <div class="label">领先全国指标数</div>
-                </div>
-                <div class="stat-box">
-                    <div class="number">{above_avg_count/len(selected_metrics):.1%}</div>
-                    <div class="label">指标领先占比</div>
-                </div>
-                <div class="stat-box">
-                    <div class="number">{latest_year}</div>
-                    <div class="label">最新数据年份</div>
-                </div>
-            </div>
-        </div>
+    return {
+        "内在价值": round(close_price, 2), "当前价格": round(close_price, 2),
+        "估值溢价": 0, "估值判断": "数据不足", "估值颜色": "#64748b",
+        "每股股利": "N/A", "折现率": "N/A", "永续增长率": "N/A",
+        "ROE": "N/A", "EPS": "N/A", "PE": "N/A", "PB": "N/A", "股息率": "N/A"
+    }
 
-        <div class="section">
-            <h2>📋 分指标详情对比</h2>
-            <table>
-                <thead>
-                    <tr>
-                        <th>指标名称</th>
-                        <th>{prov_name}值</th>
-                        <th>全国均值</th>
-                        <th>单位</th>
-                        <th>相对水平</th>
-                        <th>年均增速</th>
-                        <th>发展状态</th>
-                    </tr>
-                </thead>
-                <tbody>
-"""
-        for d in detail_list:
-            status_class = "badge-success" if "领先" in d["发展状态"] else "badge-warning" if "持平" in d["发展状态"] else "badge-danger"
-            html_body += f"""
-                    <tr>
-                        <td><strong>{d['指标名称']}</strong></td>
-                        <td>{d[f'{prov_name}值']}</td>
-                        <td>{d['全国均值']}</td>
-                        <td>{d['单位']}</td>
-                        <td>{d['相对水平']}</td>
-                        <td>{d['年均增速']}</td>
-                        <td><span class="badge {status_class}">{d['发展状态']}</span></td>
-                    </tr>
-"""
 
-        html_body += """
-                </tbody>
-            </table>
-        </div>
-
-        <div class="section">
-            <h2>💡 综合发展建议</h2>
-"""
-        adv_metrics = [d["指标名称"] for d in detail_list if "领先" in d["发展状态"]]
-        weak_metrics = [d["指标名称"] for d in detail_list if "落后" in d["发展状态"]]
-
-        html_body += f"""
-            <div class="suggestion sg-conclusion">
-                <strong>综合评价：</strong>本次分析的 <span class="highlight">{len(selected_metrics)}个指标</span> 中，
-                <span style="color:#10b981;"><strong>领先指标 {len(adv_metrics)} 个</strong></span>，
-                <span style="color:#ef4444;"><strong>落后指标 {len(weak_metrics)} 个</strong></span>。
-            </div>
-
-            <div class="suggestion sg-advantage">
-                <strong>1. 巩固优势领域</strong><br>
-                {f"持续强化 <strong>{', '.join(adv_metrics)}</strong> 等领先指标的竞争优势。" if adv_metrics else "暂无显著领先指标，建议优先培育1-2个核心优势领域。"}
-            </div>
-
-            <div class="suggestion sg-weakness">
-                <strong>2. 补齐短板弱项</strong><br>
-                {f"重点补齐 <strong>{', '.join(weak_metrics)}</strong> 等短板指标，对标全国先进省份。" if weak_metrics else "无明显短板指标，整体发展较为均衡。"}
-            </div>
-
-            <div class="suggestion sg-trend">
-                <strong>3. 区域协同发展</strong><br>
-                积极融入国家区域重大战略，加强与周边省份的产业协作、人才交流和要素流动。
-            </div>
-        </div>
-"""
-
-    html_foot = f"""
-        <div class="footer">
-            <p>数据来源：中国省级数据库2025版 | 技术架构：Streamlit + Plotly + Pandas</p>
-            <p>© 2025 中国省级数据库可视化分析与决策支持平台 | 生成时间：{now_str}</p>
-        </div>
-    </div>
-</body>
-</html>
-"""
-
-    return html_head + html_body + html_foot
-
-# ===================== 数据加载与标准化 =====================
-@st.cache_data(ttl=3600, show_spinner="正在加载全量省级数据库，请稍候...")
-def load_and_standardize_data(file_path: str) -> pd.DataFrame:
-    if not os.path.exists(file_path):
-        st.error(f"❌ 数据文件未找到，请检查路径：{file_path}\n\n请确保CSV文件与app.py在同一目录。")
-        st.stop()
-
+# ===================== 相对估值法 =====================
+def calc_relative_valuation(symbol, close_price, fin_df, industry):
     try:
-        df_raw = None
-        encoding_used = None
-        for enc in ['gbk', 'gb2312', 'gb18030', 'utf-8-sig', 'utf-8']:
+        pe = 0; pb = 0; ps = 0; ev_ebitda = 0; roe = 0; revenue = 0; net_profit = 0
+
+        if fin_df is not None and not fin_df.empty:
+            for col in fin_df.columns:
+                col_str = str(col).lower()
+                if "市盈率" in str(col) or "pe" in col_str:
+                    try:
+                        pe = float(fin_df[col].iloc[0])
+                    except:
+                        pass
+                if "市净率" in str(col) or "pb" in col_str:
+                    try:
+                        pb = float(fin_df[col].iloc[0])
+                    except:
+                        pass
+                if "市销率" in str(col) or "ps" in col_str:
+                    try:
+                        ps = float(fin_df[col].iloc[0])
+                    except:
+                        pass
+                if "ev/ebitda" in col_str or "企业价值倍数" in str(col):
+                    try:
+                        ev_ebitda = float(fin_df[col].iloc[0])
+                    except:
+                        pass
+                if "净资产收益率" in str(col) or "roe" in col_str:
+                    try:
+                        roe = float(fin_df[col].iloc[0])
+                    except:
+                        pass
+                if any(k in col_str for k in ["营业收入", "营业总收入"]):
+                    try:
+                        revenue = float(fin_df[col].iloc[0])
+                    except:
+                        pass
+                if any(k in col_str for k in ["净利润", "归母净利润"]):
+                    try:
+                        net_profit = float(fin_df[col].iloc[0])
+                    except:
+                        pass
+
+        if ps <= 0 and revenue > 0:
+            info = get_stock_individual_info(symbol)
+            total_shares = 0
             try:
-                df_raw = pd.read_csv(file_path, encoding=enc, low_memory=False)
-                encoding_used = enc
-                break
-            except UnicodeDecodeError:
-                continue
+                total_shares_str = str(info.get("总股本", "0")).replace(",", "").replace("万股", "").replace("亿", "")
+                total_shares = float(total_shares_str)
+                if total_shares > 1000000:
+                    total_shares = total_shares / 10000
+            except:
+                total_shares = close_price * 100
+            market_cap = close_price * total_shares
+            if market_cap > 0 and revenue > 0:
+                ps = market_cap / revenue
 
-        if df_raw is None:
-            st.error("❌ 无法读取CSV文件，编码不支持。请确保文件为GBK或UTF-8编码。")
-            st.stop()
+        industry_benchmarks = {
+            "金融": {"pe": [6, 12], "pb": [0.8, 1.5], "ps": [2, 5]},
+            "消费": {"pe": [20, 40], "pb": [3, 8], "ps": [2, 6]},
+            "医药": {"pe": [25, 50], "pb": [3, 8], "ps": [3, 10]},
+            "科技": {"pe": [30, 60], "pb": [4, 10], "ps": [4, 15]},
+            "新能源": {"pe": [20, 40], "pb": [2, 6], "ps": [2, 8]},
+            "制造": {"pe": [12, 25], "pb": [1.5, 3.5], "ps": [1, 4]},
+            "材料": {"pe": [10, 20], "pb": [1, 2.5], "ps": [0.5, 3]},
+            "基建": {"pe": [8, 18], "pb": [0.8, 2], "ps": [0.3, 2]},
+            "能源": {"pe": [8, 15], "pb": [1, 2], "ps": [1, 4]},
+            "物流": {"pe": [10, 20], "pb": [1, 2.5], "ps": [0.5, 3]},
+            "其他": {"pe": [15, 30], "pb": [1.5, 4], "ps": [1, 5]}
+        }
 
-        required_cols = ['地区', '年份']
-        for col in required_cols:
-            if col not in df_raw.columns:
-                st.error(f"❌ CSV文件中缺少必要列：{col}")
-                st.stop()
+        category = classify_industry(industry)
+        bench = industry_benchmarks.get(category, industry_benchmarks["其他"])
 
-        if '所属地域' not in df_raw.columns:
-            df_raw['所属地域'] = '其他'
+        def judge_ratio(value, low, high):
+            if value <= 0:
+                return "N/A", "#64748b"
+            if value < low * 0.7:
+                return "显著低估", "#16a34a"
+            elif value < low:
+                return "低估", "#22c55e"
+            elif value <= high:
+                return "合理", "#f59e0b"
+            elif value <= high * 1.3:
+                return "高估", "#f97316"
+            else:
+                return "显著高估", "#dc2626"
 
-        df_raw['年份'] = pd.to_numeric(df_raw['年份'], errors='coerce')
-        df_raw = df_raw.dropna(subset=['年份'])
-        df_raw['年份'] = df_raw['年份'].astype(int)
+        pe_judge, pe_color = judge_ratio(pe, bench["pe"][0], bench["pe"][1])
+        pb_judge, pb_color = judge_ratio(pb, bench["pb"][0], bench["pb"][1])
+        ps_judge, ps_color = judge_ratio(ps, bench["ps"][0], bench["ps"][1])
 
-        meta_cols = ['行政区划代码', '地区', '所属地域', '年份']
-        indicator_cols = [c for c in df_raw.columns if c not in meta_cols]
+        judges = [j for j in [pe_judge, pb_judge, ps_judge] if j != "N/A"]
+        if judges:
+            under_count = sum(1 for j in judges if "低估" in j)
+            over_count = sum(1 for j in judges if "高估" in j)
+            if under_count >= 2:
+                overall = "低估"; overall_color = "#16a34a"
+            elif over_count >= 2:
+                overall = "高估"; overall_color = "#dc2626"
+            else:
+                overall = "合理"; overall_color = "#f59e0b"
+        else:
+            overall = "数据不足"; overall_color = "#64748b"
 
-        if len(indicator_cols) == 0:
-            st.error("❌ CSV文件中未找到任何指标列")
-            st.stop()
+        return {
+            "PE": round(pe, 2) if pe > 0 else "N/A",
+            "PE判断": pe_judge, "PE颜色": pe_color,
+            "PB": round(pb, 2) if pb > 0 else "N/A",
+            "PB判断": pb_judge, "PB颜色": pb_color,
+            "PS": round(ps, 2) if ps > 0 else "N/A",
+            "PS判断": ps_judge, "PS颜色": ps_color,
+            "EV/EBITDA": round(ev_ebitda, 2) if ev_ebitda > 0 else "N/A",
+            "行业": category,
+            "行业PE区间": f"{bench['pe'][0]}-{bench['pe'][1]}",
+            "行业PB区间": f"{bench['pb'][0]}-{bench['pb'][1]}",
+            "行业PS区间": f"{bench['ps'][0]}-{bench['ps'][1]}",
+            "综合判断": overall,
+            "综合颜色": overall_color
+        }
+    except Exception:
+        pass
 
-        id_vars = [c for c in meta_cols if c in df_raw.columns]
-        df_long = df_raw.melt(
-            id_vars=id_vars,
-            value_vars=indicator_cols,
-            var_name="指标名称",
-            value_name="指标值"
-        )
+    return {
+        "PE": "N/A", "PE判断": "N/A", "PE颜色": "#64748b",
+        "PB": "N/A", "PB判断": "N/A", "PB颜色": "#64748b",
+        "PS": "N/A", "PS判断": "N/A", "PS颜色": "#64748b",
+        "EV/EBITDA": "N/A", "行业": "其他",
+        "行业PE区间": "N/A", "行业PB区间": "N/A", "行业PS区间": "N/A",
+        "综合判断": "数据不足", "综合颜色": "#64748b"
+    }
 
-        df_long["指标值"] = pd.to_numeric(df_long["指标值"], errors='coerce')
-        df_long = df_long.dropna(subset=["指标值"]).reset_index(drop=True)
 
-        parsed = df_long["指标名称"].apply(parse_indicator_name)
-        df_long["指标名称_纯"] = parsed.apply(lambda x: x[0])
-        df_long["单位"] = parsed.apply(lambda x: x[1])
+# ===================== 技术指标计算 =====================
+def calc_technical_indicators(df):
+    df = df.copy()
+    df["MA5"] = df["收盘"].rolling(5).mean()
+    df["MA10"] = df["收盘"].rolling(10).mean()
+    df["MA20"] = df["收盘"].rolling(20).mean()
+    df["MA60"] = df["收盘"].rolling(60).mean()
 
-        df_long["地区_标准"] = df_long["地区"].map(PROVINCE_STD_MAP).fillna(df_long["地区"])
+    ema12 = df["收盘"].ewm(span=12, adjust=False).mean()
+    ema26 = df["收盘"].ewm(span=26, adjust=False).mean()
+    df["DIF"] = ema12 - ema26
+    df["DEA"] = df["DIF"].ewm(span=9, adjust=False).mean()
+    df["MACD"] = (df["DIF"] - df["DEA"]) * 2
 
-        return df_long
+    delta = df["收盘"].diff()
+    gain = delta.where(delta > 0, 0).rolling(14).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
+    rs = gain / loss
+    df["RSI"] = 100 - (100 / (1 + rs))
 
-    except Exception as e:
-        st.error(f"❌ 数据加载失败：{str(e)}\n\n请检查CSV文件格式是否正确")
-        st.stop()
+    df["BOLL_MID"] = df["收盘"].rolling(20).mean()
+    boll_std = df["收盘"].rolling(20).std()
+    df["BOLL_UPPER"] = df["BOLL_MID"] + 2 * boll_std
+    df["BOLL_LOWER"] = df["BOLL_MID"] - 2 * boll_std
 
-# ===================== 新手引导组件 =====================
-def show_newbie_guide():
-    """显示新手引导"""
-    with st.expander("🚀 新手快速入门指南（点击展开）", expanded=False):
-        st.markdown("""
-        <div class="guide-box">
-            <h4 style="color: #00d4ff; margin-bottom: 0.8rem;">👋 欢迎使用中国省级数据库可视化平台</h4>
-            <p style="color: #94a3b8; margin-bottom: 1rem;">本系统支持3000+省级经济社会指标的多维度分析与决策支持，只需3步即可生成专业分析报告：</p>
+    df["VOL_MA5"] = df["成交量"].rolling(5).mean()
+    df["VOL_MA10"] = df["成交量"].rolling(10).mean()
+    return df
 
-            <div class="guide-step">
-                <div class="guide-step-num">1</div>
-                <div class="guide-step-text">
-                    <strong style="color: #e2e8f0;">选择分析模式</strong><br>
-                    <span style="color: #94a3b8;">🌍 省际对比：横向对比多个省份的同一指标，适合区域竞争分析</span><br>
-                    <span style="color: #94a3b8;">📍 单省深度：纵向分析单个省份的多项指标，适合省内诊断</span>
-                </div>
-            </div>
 
-            <div class="guide-step">
-                <div class="guide-step-num">2</div>
-                <div class="guide-step-text">
-                    <strong style="color: #e2e8f0;">配置筛选条件</strong><br>
-                    <span style="color: #94a3b8;">• 省份：选择需要分析的省份（支持全选/清空）</span><br>
-                    <span style="color: #94a3b8;">• 时间：拖动滑块选择年份区间</span><br>
-                    <span style="color: #94a3b8;">• 指标：选择关注的经济社会指标（如GDP、人口等）</span>
-                </div>
-            </div>
+# ===================== 多因子评分模型 =====================
+def calc_multi_factor_score(s_df, ddm, dcf, relative, fin_df):
+    scores = {}
 
-            <div class="guide-step">
-                <div class="guide-step-num">3</div>
-                <div class="guide-step-text">
-                    <strong style="color: #e2e8f0;">查看分析与导出</strong><br>
-                    <span style="color: #94a3b8;">• 自动生成交互式图表（地图、趋势、排名、雷达图等）</span><br>
-                    <span style="color: #94a3b8;">• 查看智能诊断建议与发展策略</span><br>
-                    <span style="color: #94a3b8;">• 下载CSV数据、TXT报告或精美HTML报告</span>
-                </div>
-            </div>
+    value_score = 50
+    if ddm["估值判断"] in ["严重低估", "低估"]:
+        value_score += 25
+    elif ddm["估值判断"] == "合理":
+        value_score += 10
+    elif ddm["估值判断"] in ["高估", "严重高估"]:
+        value_score -= 20
 
-            <div style="margin-top: 1rem; padding: 0.8rem; background: rgba(0, 212, 255, 0.05); border-radius: 10px; border: 1px solid rgba(0, 212, 255, 0.2);">
-                <p style="color: #00d4ff; font-size: 0.9rem; margin: 0;">💡 <strong>小贴士：</strong>首次使用建议先尝试"省际对比"模式，选择"地区生产总值"指标，即可快速体验核心功能！</p>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
+    if dcf["估值判断"] in ["严重低估", "低估"]:
+        value_score += 15
+    elif dcf["估值判断"] in ["高估", "严重高估"]:
+        value_score -= 10
 
-# ===================== 主程序入口 =====================
+    if relative["综合判断"] in ["显著低估", "低估"]:
+        value_score += 10
+    elif relative["综合判断"] in ["高估", "显著高估"]:
+        value_score -= 10
+
+    scores["价值因子"] = min(max(value_score, 0), 100)
+
+    close = s_df["收盘"].values
+    ret_5d = (close[-1] / close[-6] - 1) * 100 if len(close) >= 6 else 0
+    ret_20d = (close[-1] / close[-21] - 1) * 100 if len(close) >= 21 else 0
+
+    momentum_score = 50
+    if ret_20d > 10:
+        momentum_score += 25
+    elif ret_20d > 5:
+        momentum_score += 15
+    elif ret_20d > 0:
+        momentum_score += 5
+    elif ret_20d < -10:
+        momentum_score -= 20
+    elif ret_20d < -5:
+        momentum_score -= 10
+
+    if ret_5d > 5:
+        momentum_score += 5
+    elif ret_5d < -5:
+        momentum_score -= 5
+
+    scores["动量因子"] = min(max(momentum_score, 0), 100)
+
+    quality_score = 50
+    roe = 0
+    if fin_df is not None and not fin_df.empty:
+        for col in fin_df.columns:
+            if "净资产收益率" in str(col) or "roe" in str(col).lower():
+                try:
+                    roe = float(fin_df[col].iloc[0])
+                except:
+                    pass
+
+    if roe > 0:
+        if roe > 20:
+            quality_score += 30
+        elif roe > 15:
+            quality_score += 20
+        elif roe > 10:
+            quality_score += 10
+        elif roe < 5:
+            quality_score -= 20
+
+    volatility = s_df["涨跌幅"].iloc[-60:].std() * np.sqrt(252) if len(s_df) >= 60 else 0
+    if volatility > 50:
+        quality_score -= 15
+    elif volatility < 20:
+        quality_score += 10
+
+    scores["质量因子"] = min(max(quality_score, 0), 100)
+
+    s_df_ind = calc_technical_indicators(s_df)
+    ma5 = s_df_ind["MA5"].iloc[-1]
+    ma10 = s_df_ind["MA10"].iloc[-1]
+    ma20 = s_df_ind["MA20"].iloc[-1]
+    ma60 = s_df_ind["MA60"].iloc[-1]
+
+    trend_score = 50
+    if ma5 > ma10 > ma20 > ma60:
+        trend_score = 100
+    elif ma5 > ma10 > ma20:
+        trend_score = 80
+    elif ma5 > ma10:
+        trend_score = 60
+    elif ma5 < ma10 < ma20 < ma60:
+        trend_score = 20
+    elif ma5 < ma10 < ma20:
+        trend_score = 30
+    elif ma5 < ma10:
+        trend_score = 40
+
+    if s_df_ind["DIF"].iloc[-1] > s_df_ind["DEA"].iloc[-1]:
+        trend_score += 5
+    else:
+        trend_score -= 5
+
+    scores["趋势因子"] = min(max(trend_score, 0), 100)
+
+    total_score = (
+        scores["价值因子"] * 0.30 +
+        scores["动量因子"] * 0.25 +
+        scores["质量因子"] * 0.25 +
+        scores["趋势因子"] * 0.20
+    )
+
+    scores["综合评分"] = round(total_score, 2)
+    scores["20日涨幅"] = round(ret_20d, 2)
+    scores["60日涨幅"] = round((close[-1] / close[-61] - 1) * 100 if len(close) >= 61 else 0, 2)
+    scores["年化波动率"] = round(volatility, 2)
+
+    return scores
+
+
+# ===================== 蒙特卡洛预测 =====================
+def calc_monte_carlo_prediction(df, predict_days=30):
+    close_prices = df["收盘"].values
+    returns = np.diff(np.log(close_prices))
+    last_price = close_prices[-1]
+
+    x = np.arange(len(returns))
+    slope, intercept, _, _, _ = stats.linregress(x, returns)
+    volatility = np.std(returns[-60:]) if len(returns) >= 60 else np.std(returns)
+
+    n_simulations = 1000
+    prediction_paths = np.zeros((n_simulations, predict_days))
+    prediction_paths[:, 0] = last_price
+
+    for t in range(1, predict_days):
+        shock = np.random.normal(slope, volatility, n_simulations)
+        prediction_paths[:, t] = prediction_paths[:, t-1] * np.exp(shock)
+
+    median_prediction = np.median(prediction_paths, axis=0)
+    lower_bound = np.percentile(prediction_paths, 10, axis=0)
+    upper_bound = np.percentile(prediction_paths, 90, axis=0)
+
+    last_date = df["日期"].iloc[-1]
+    pred_dates = []
+    d = last_date
+    while len(pred_dates) < predict_days:
+        d = d + timedelta(days=1)
+        if d.weekday() < 5:
+            pred_dates.append(d)
+
+    pred_df = pd.DataFrame({
+        "日期": pred_dates[:predict_days],
+        "预测价格": median_prediction[:len(pred_dates)],
+        "上界": upper_bound[:len(pred_dates)],
+        "下界": lower_bound[:len(pred_dates)]
+    })
+    return pred_df
+
+
+# ===================== 智能选股 =====================
+def stock_filter_and_pick(df, code2name):
+    stock_list = df["股票代码"].unique()
+    metrics = []
+
+    for code in stock_list:
+        s_df = df[df["股票代码"] == code].sort_values("日期").reset_index(drop=True)
+        if len(s_df) < 60:
+            continue
+
+        close = s_df["收盘"].iloc[-1]
+        code_str = str(code).zfill(6)
+        info = get_stock_individual_info(code_str)
+        fin_df = get_stock_financial_indicators(code_str)
+        ddm = calc_ddm_valuation(close, fin_df)
+        dcf = calc_dcf_valuation(code_str, close, fin_df)
+        relative = calc_relative_valuation(code_str, close, fin_df, info.get("行业", ""))
+        factor_scores = calc_multi_factor_score(s_df, ddm, dcf, relative, fin_df)
+
+        industry = info.get("行业", "未知")
+        category = classify_industry(industry)
+
+        metrics.append({
+            "股票代码": code,
+            "股票名称": code2name.get(code, "未知"),
+            "最新价": close,
+            "行业": industry,
+            "行业大类": category,
+            "综合评分": factor_scores["综合评分"],
+            "价值因子": factor_scores["价值因子"],
+            "动量因子": factor_scores["动量因子"],
+            "质量因子": factor_scores["质量因子"],
+            "趋势因子": factor_scores["趋势因子"],
+            "20日涨幅": factor_scores["20日涨幅"],
+            "60日涨幅": factor_scores["60日涨幅"],
+            "年化波动率": factor_scores["年化波动率"],
+            "DDM估值": ddm,
+            "DCF估值": dcf,
+            "相对估值": relative,
+            "技术数据": s_df,
+        })
+
+    if len(metrics) < 5:
+        return None, "有效个股不足5只，无法完成选股"
+
+    m_df = pd.DataFrame(metrics)
+    m_df = m_df.sort_values("综合评分", ascending=False)
+    selected = m_df.head(5).reset_index(drop=True)
+
+    res = []
+    today = datetime.now()
+
+    for i, row in selected.iterrows():
+        s_df = row["技术数据"]
+        cur_price = row["最新价"]
+        ddm = row["DDM估值"]
+        dcf = row["DCF估值"]
+        relative = row["相对估值"]
+
+        hist_vol = s_df["涨跌幅"].iloc[-60:].std() if len(s_df) >= 60 else s_df["涨跌幅"].std()
+        avg_daily_ret = s_df["涨跌幅"].iloc[-20:].mean()
+
+        expected_ret = avg_daily_ret * 30
+        expected_ret = max(min(expected_ret, 0.25), -0.15)
+
+        hold = 30
+        buy = round(cur_price * 0.98, 2)
+        sell = round(buy * (1 + expected_ret), 2)
+        sell_dt = (today + timedelta(days=hold)).strftime("%Y-%m-%d")
+
+        pred_df = calc_monte_carlo_prediction(s_df, predict_days=60)
+        advice = generate_investment_advice(row, ddm, dcf, relative, s_df)
+
+        res.append({
+            "序号": i + 1,
+            "股票代码": row["股票代码"],
+            "股票名称": row["股票名称"],
+            "最新收盘价": round(cur_price, 2),
+            "建议买入价": buy,
+            "预期卖出价": sell,
+            "预期收益率": round(expected_ret * 100, 2),
+            "预期卖出日": sell_dt,
+            "持有天数": hold,
+            "综合评分": row["综合评分"],
+            "价值因子": row["价值因子"],
+            "动量因子": row["动量因子"],
+            "质量因子": row["质量因子"],
+            "趋势因子": row["趋势因子"],
+            "20日涨幅": row["20日涨幅"],
+            "60日涨幅": row["60日涨幅"],
+            "年化波动率": row["年化波动率"],
+            "行业": row["行业"],
+            "行业大类": row["行业大类"],
+            "DDM估值": ddm,
+            "DCF估值": dcf,
+            "相对估值": relative,
+            "投资建议": advice,
+            "K线数据": s_df.tail(120),
+            "预测数据": pred_df
+        })
+
+    return res, f"多因子选股完成，共筛选出5只优质个股"
+
+
+def generate_investment_advice(row, ddm, dcf, relative, s_df):
+    advice_list = []
+    risk_notes = []
+
+    score = row["综合评分"]
+    if score >= 80:
+        suitability = "强烈推荐"; suit_color = "#16a34a"
+    elif score >= 65:
+        suitability = "推荐"; suit_color = "#22c55e"
+    elif score >= 50:
+        suitability = "中性"; suit_color = "#f59e0b"
+    else:
+        suitability = "谨慎"; suit_color = "#dc2626"
+
+    if ddm["估值判断"] in ["严重低估", "低估"]:
+        advice_list.append(f"DDM股利贴现模型显示该股票{ddm['估值判断']}，内在价值约{ddm['内在价值']}元，当前价格具备安全边际")
+    elif ddm["估值判断"] in ["高估", "严重高估"]:
+        risk_notes.append(f"DDM模型显示该股票{ddm['估值判断']}，内在价值约{ddm['内在价值']}元，注意估值回调风险")
+
+    if dcf["估值判断"] in ["严重低估", "低估"]:
+        advice_list.append(f"DCF现金流折现模型显示该股票{dcf['估值判断']}，企业价值约{dcf['企业价值']}亿元，具备投资价值")
+    elif dcf["估值判断"] in ["高估", "严重高估"]:
+        risk_notes.append(f"DCF模型显示该股票{dcf['估值判断']}，企业价值约{dcf['企业价值']}亿元，注意估值风险")
+
+    if relative["综合判断"] in ["显著低估", "低估"]:
+        advice_list.append(f"相对估值法(PE/PB/PS)显示该股票{relative['综合判断']}，低于行业平均水平")
+    elif relative["综合判断"] in ["高估", "显著高估"]:
+        risk_notes.append(f"相对估值法显示该股票{relative['综合判断']}，高于行业平均水平")
+
+    if row["价值因子"] >= 80:
+        advice_list.append(f"价值因子得分{row['价值因子']:.0f}分，估值优势明显")
+    if row["动量因子"] >= 80:
+        advice_list.append(f"动量因子得分{row['动量因子']:.0f}分，近期走势强劲")
+    elif row["动量因子"] <= 30:
+        risk_notes.append(f"动量因子得分{row['动量因子']:.0f}分，近期走势偏弱")
+    if row["质量因子"] >= 80:
+        advice_list.append(f"质量因子得分{row['质量因子']:.0f}分，财务质量优良")
+    if row["趋势因子"] >= 80:
+        advice_list.append(f"趋势因子得分{row['趋势因子']:.0f}分，技术形态良好")
+    elif row["趋势因子"] <= 30:
+        risk_notes.append(f"趋势因子得分{row['趋势因子']:.0f}分，技术形态偏弱")
+
+    if row["年化波动率"] > 40:
+        risk_notes.append(f"年化波动率{row['年化波动率']:.1f}%较高，价格波动剧烈")
+    elif row["年化波动率"] < 20:
+        advice_list.append(f"年化波动率{row['年化波动率']:.1f}%较低，价格走势稳定")
+
+    category = row["行业大类"]
+    industry = row["行业"]
+    if category in ["金融", "能源"]:
+        advice_list.append(f"{industry}板块受宏观经济政策和利率影响较大，建议关注政策面变化")
+    elif category in ["科技", "新能源"]:
+        advice_list.append(f"{industry}板块成长性高但波动大，建议控制仓位")
+    elif category in ["消费", "医药"]:
+        advice_list.append(f"{industry}板块防御性强，适合作为组合底仓")
+
+    advice_list.append("建议分批建仓，首次仓位不超过总资金的30%")
+    advice_list.append("设置8%-10%为止损线，若跌破关键支撑位果断止损")
+    advice_list.append("到达预期卖出价后分批止盈，锁定收益")
+
+    if score >= 70 and (ddm["估值判断"] in ["严重低估", "低估"] or dcf["估值判断"] in ["严重低估", "低估"]):
+        future_suit = "非常适合投资"; future_color = "#16a34a"
+    elif score >= 60:
+        future_suit = "适合投资"; future_color = "#22c55e"
+    elif score >= 45:
+        future_suit = "谨慎投资"; future_color = "#f59e0b"
+    else:
+        future_suit = "不建议投资"; future_color = "#dc2626"
+
+    return {
+        "适合度评级": suitability,
+        "适合度颜色": suit_color,
+        "未来适合投资": future_suit,
+        "未来适合颜色": future_color,
+        "买入建议": advice_list,
+        "风险提示": risk_notes,
+        "行业": row["行业"],
+        "行业大类": category
+    }
+
+
+# ===================== 可视化函数 =====================
+def draw_stock_kline(s_df, name, code):
+    s_df = calc_technical_indicators(s_df)
+    up_color = "#dc2626"
+    down_color = "#16a34a"
+
+    fig = make_subplots(
+        rows=4, cols=1, shared_xaxes=True, vertical_spacing=0.03,
+        row_heights=[0.45, 0.15, 0.2, 0.2]
+    )
+
+    fig.add_trace(go.Candlestick(
+        x=s_df["日期"], open=s_df["开盘"], high=s_df["最高"],
+        low=s_df["最低"], close=s_df["收盘"],
+        increasing_line_color=up_color, decreasing_line_color=down_color, name="日K线"
+    ), row=1, col=1)
+    fig.add_trace(go.Scatter(x=s_df["日期"], y=s_df["MA5"], line=dict(color="#1e40af", width=1.2), name="MA5"), row=1, col=1)
+    fig.add_trace(go.Scatter(x=s_df["日期"], y=s_df["MA10"], line=dict(color="#f59e0b", width=1.2), name="MA10"), row=1, col=1)
+    fig.add_trace(go.Scatter(x=s_df["日期"], y=s_df["MA20"], line=dict(color="#16a34a", width=1.2), name="MA20"), row=1, col=1)
+    fig.add_trace(go.Scatter(x=s_df["日期"], y=s_df["BOLL_UPPER"], line=dict(color="#8b5cf6", width=1, dash="dot"), name="布林上轨", showlegend=False), row=1, col=1)
+    fig.add_trace(go.Scatter(x=s_df["日期"], y=s_df["BOLL_LOWER"], line=dict(color="#8b5cf6", width=1, dash="dot"), name="布林下轨", showlegend=False), row=1, col=1)
+
+    vol_colors = [up_color if o <= c else down_color for o, c in zip(s_df["开盘"], s_df["收盘"])]
+    fig.add_trace(go.Bar(x=s_df["日期"], y=s_df["成交量"], marker_color=vol_colors, name="成交量", opacity=0.7), row=2, col=1)
+
+    macd_colors = ["#16a34a" if v >= 0 else "#dc2626" for v in s_df["MACD"]]
+    fig.add_trace(go.Bar(x=s_df["日期"], y=s_df["MACD"], marker_color=macd_colors, name="MACD柱", opacity=0.7), row=3, col=1)
+    fig.add_trace(go.Scatter(x=s_df["日期"], y=s_df["DIF"], line=dict(color="#1e40af", width=1.5), name="DIF"), row=3, col=1)
+    fig.add_trace(go.Scatter(x=s_df["日期"], y=s_df["DEA"], line=dict(color="#f59e0b", width=1.5), name="DEA"), row=3, col=1)
+
+    fig.add_trace(go.Scatter(x=s_df["日期"], y=s_df["RSI"], line=dict(color="#8b5cf6", width=1.5), name="RSI(14)"), row=4, col=1)
+    fig.add_hline(y=70, line_dash="dash", line_color="#dc2626", line_width=1, row=4, col=1)
+    fig.add_hline(y=30, line_dash="dash", line_color="#16a34a", line_width=1, row=4, col=1)
+
+    fig.update_layout(
+        title=f"{name}({code}) K线技术分析图",
+        height=900, template="plotly_white",
+        legend=dict(orientation="h", y=1.02, font=dict(size=10)),
+        margin=dict(l=20, r=20, t=50, b=20),
+        xaxis_rangeslider_visible=False
+    )
+    fig.update_yaxes(title_text="价格(元)", row=1, col=1)
+    fig.update_yaxes(title_text="成交量", row=2, col=1)
+    fig.update_yaxes(title_text="MACD", row=3, col=1)
+    fig.update_yaxes(title_text="RSI(14)", row=4, col=1, range=[0, 100])
+    return fig
+
+
+def draw_prediction_chart(s_df, pred_df, name, code):
+    fig = go.Figure()
+    hist_data = s_df.tail(60)
+
+    fig.add_trace(go.Scatter(
+        x=hist_data["日期"], y=hist_data["收盘"],
+        mode="lines", line=dict(color="#1e40af", width=2), name="历史价格"
+    ))
+    fig.add_trace(go.Scatter(
+        x=pred_df["日期"], y=pred_df["预测价格"],
+        mode="lines", line=dict(color="#f59e0b", width=2, dash="dash"), name="预测价格"
+    ))
+    fig.add_trace(go.Scatter(
+        x=pred_df["日期"].tolist() + pred_df["日期"].tolist()[::-1],
+        y=pred_df["上界"].tolist() + pred_df["下界"].tolist()[::-1],
+        fill="toself", fillcolor="rgba(245,158,11,0.15)",
+        line=dict(color="rgba(245,158,11,0.3)", width=1),
+        name="90%置信区间"
+    ))
+
+    last_price = hist_data["收盘"].iloc[-1]
+    fig.add_hline(y=last_price, line_dash="dot", line_color="#1e40af",
+                  annotation_text=f"当前价: {last_price:.2f}")
+
+    fig.update_layout(
+        title=f"{name}({code}) 价格预测走势",
+        height=450, template="plotly_white",
+        legend=dict(orientation="h", y=1.02),
+        margin=dict(l=20, r=20, t=50, b=20),
+        xaxis_rangeslider_visible=False,
+        xaxis_title="日期", yaxis_title="价格(元)"
+    )
+    return fig
+
+
+def draw_factor_radar(factor_scores):
+    categories = ["价值因子", "动量因子", "质量因子", "趋势因子"]
+    values = [factor_scores.get(k, 0) for k in categories]
+    values += [values[0]]
+
+    fig = go.Figure(data=go.Scatterpolar(
+        r=values,
+        theta=categories + [categories[0]],
+        fill='toself',
+        fillcolor='rgba(30,64,175,0.2)',
+        line=dict(color='#1e40af', width=2),
+        name='因子得分'
+    ))
+
+    fig.update_layout(
+        polar=dict(radialaxis=dict(visible=True, range=[0, 100])),
+        showlegend=False,
+        title="多因子评分雷达图",
+        height=400,
+        template="plotly_white"
+    )
+    return fig
+
+
+def draw_index_overview(df):
+    daily_stats = df.groupby("日期").agg({
+        "收盘": "mean", "成交量": "sum", "涨跌幅": "mean",
+        "振幅": "mean", "换手率": "mean"
+    }).reset_index()
+    daily_stats["累计收益"] = (daily_stats["收盘"] / daily_stats["收盘"].iloc[0] - 1) * 100
+
+    fig = make_subplots(
+        rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.05,
+        row_heights=[0.5, 0.25, 0.25],
+        specs=[[{"secondary_y": True}], [{"secondary_y": False}], [{"secondary_y": False}]]
+    )
+
+    fig.add_trace(go.Scatter(
+        x=daily_stats["日期"], y=daily_stats["收盘"],
+        mode="lines", line=dict(color="#1e40af", width=2), name="平均收盘价",
+        fill="tozeroy", fillcolor="rgba(30,64,175,0.05)"
+    ), row=1, col=1, secondary_y=False)
+
+    fig.add_trace(go.Scatter(
+        x=daily_stats["日期"], y=daily_stats["累计收益"],
+        mode="lines", line=dict(color="#06b6d4", width=1.5, dash="dot"), name="累计收益(%)"
+    ), row=1, col=1, secondary_y=True)
+
+    vol_colors = ["#16a34a" if r >= 0 else "#dc2626" for r in daily_stats["涨跌幅"]]
+    fig.add_trace(go.Bar(x=daily_stats["日期"], y=daily_stats["成交量"],
+                         marker_color=vol_colors, name="成交量", opacity=0.7), row=2, col=1)
+    fig.add_trace(go.Bar(x=daily_stats["日期"], y=daily_stats["涨跌幅"],
+                         marker_color=vol_colors, name="平均涨跌幅(%)", opacity=0.8), row=3, col=1)
+
+    fig.update_layout(
+        title="沪深300成分股整体走势概览",
+        height=700, template="plotly_white",
+        legend=dict(orientation="h", y=1.02),
+        margin=dict(l=20, r=20, t=50, b=20),
+        xaxis_rangeslider_visible=False
+    )
+    fig.update_yaxes(title_text="平均价格", row=1, col=1, secondary_y=False)
+    fig.update_yaxes(title_text="累计收益(%)", row=1, col=1, secondary_y=True)
+    fig.update_yaxes(title_text="成交量", row=2, col=1)
+    fig.update_yaxes(title_text="涨跌幅(%)", row=3, col=1)
+    return fig
+
+
+def draw_risk_analysis(df, code2name):
+    stock_metrics = []
+    for code in df["股票代码"].unique():
+        s_df = df[df["股票代码"] == code].sort_values("日期").tail(60)
+        if len(s_df) < 30:
+            continue
+        returns = s_df["涨跌幅"].values
+        stock_metrics.append({
+            "股票代码": code,
+            "股票名称": code2name.get(code, str(code)),
+            "年化波动率": np.std(returns) * np.sqrt(252) * 100,
+            "最大回撤": ((s_df["收盘"].cummax() - s_df["收盘"]) / s_df["收盘"].cummax()).max() * 100,
+            "夏普比率": (np.mean(returns) * 252) / (np.std(returns) * np.sqrt(252)) if np.std(returns) > 0 else 0,
+            "平均日收益(%)": np.mean(returns)
+        })
+
+    metrics_df = pd.DataFrame(stock_metrics)
+    metrics_df = metrics_df.sort_values("夏普比率", ascending=False).head(20)
+
+    fig = make_subplots(
+        rows=1, cols=2,
+        specs=[[{"type": "scatter"}, {"type": "bar"}]],
+        subplot_titles=("风险-收益散点图", "Top20夏普比率排名")
+    )
+
+    fig.add_trace(go.Scatter(
+        x=metrics_df["年化波动率"],
+        y=metrics_df["平均日收益(%)"] * 252,
+        mode="markers+text", text=metrics_df["股票名称"],
+        textposition="top center", textfont=dict(size=8),
+        marker=dict(size=12, color=metrics_df["夏普比率"],
+                    colorscale="RdYlGn", showscale=True,
+                    colorbar=dict(title="夏普比率")),
+        name="个股"
+    ), row=1, col=1)
+
+    colors = ["#16a34a" if v > 0 else "#dc2626" for v in metrics_df["夏普比率"]]
+    fig.add_trace(go.Bar(
+        y=metrics_df["股票名称"], x=metrics_df["夏普比率"],
+        orientation="h", marker_color=colors, name="夏普比率"
+    ), row=1, col=2)
+
+    fig.update_layout(
+        title="沪深300成分股风险分析",
+        height=500, template="plotly_white",
+        margin=dict(l=100, r=20, t=60, b=20),
+        showlegend=False
+    )
+    return fig, metrics_df
+
+
+# ===================== 主程序 =====================
 def main():
-    # 自动查找数据文件
-    FILE_PATH = None
-    possible_paths = [
-        "./中国省级数据库2025版.csv",
-        "中国省级数据库2025版.csv",
-        "./中国省级数据库2025版.xlsx",
-        "中国省级数据库2025版.xlsx",
-        "/workspace/.uploads/1b6fa534-77f3-4e3f-a7f6-e9c7fb829a33_中国省级数据库2025版.csv",
-        "/workspace/.uploads/d1cfc993-9057-4c1d-984b-afa52c0bed59_中国省级数据库2025版.xlsx"
-    ]
-    for p in possible_paths:
-        if os.path.exists(p):
-            FILE_PATH = p
-            break
-
-    if FILE_PATH is None:
-        st.error("❌ 未找到数据文件「中国省级数据库2025版.csv/.xlsx」，请确保文件与程序在同一目录")
-        st.stop()
-
-    df_full = load_and_standardize_data(FILE_PATH)
-
-    # ---------- 侧边栏筛选系统 ----------
-    st.sidebar.markdown("<h2 style='color: #00d4ff; text-align: center; margin-bottom: 1rem;'>🔍 分析设置</h2>", unsafe_allow_html=True)
-
-    # 侧边栏顶部图片
-    sidebar_img = get_image_base64("assets/sidebar_header.jpg")
-    if sidebar_img:
-        st.sidebar.markdown(f"""
-        <div style="text-align: center; margin-bottom: 1rem;">
-            <img src="data:image/jpeg;base64,{sidebar_img}" style="width: 100%; border-radius: 12px; opacity: 0.8;">
-        </div>
-        """, unsafe_allow_html=True)
-
-    analysis_mode = st.sidebar.radio(
-        "分析模式",
-        options=["🌍 省际对比分析", "📍 单省深度分析"],
-        index=0,
-        help="省际对比：多省份横向对比同一指标；单省深度：单个省份多指标纵向剖析"
-    )
-    st.sidebar.divider()
-
-    # 省份选择
-    st.sidebar.markdown("<h4 style='color: #00d4ff;'>🗺️ 省份选择</h4>", unsafe_allow_html=True)
-    all_provinces = sorted(df_full["地区"].dropna().unique())
-
-    if analysis_mode == "🌍 省际对比分析":
-        col_btn1, col_btn2 = st.sidebar.columns(2)
-        with col_btn1:
-            if st.button("全选", use_container_width=True):
-                st.session_state.sel_provs = all_provinces
-        with col_btn2:
-            if st.button("清空", use_container_width=True):
-                st.session_state.sel_provs = []
-
-        selected_provinces = st.sidebar.multiselect(
-            "选择对比省份",
-            options=all_provinces,
-            default=all_provinces[:8],
-            key="sel_provs",
-            help="可多选，建议8-15个省份保证图表可读性"
-        )
-    else:
-        selected_province = st.sidebar.selectbox(
-            "选择分析省份",
-            options=all_provinces,
-            index=0
-        )
-        selected_provinces = [selected_province]
-
-    # 年份范围
-    st.sidebar.markdown("<h4 style='color: #00d4ff;'>📅 时间区间</h4>", unsafe_allow_html=True)
-    min_year = int(df_full["年份"].min())
-    max_year = int(df_full["年份"].max())
-    selected_years = st.sidebar.slider(
-        "选择年份范围",
-        min_value=min_year, max_value=max_year,
-        value=(max(2012, min_year), max_year), step=1
-    )
-    st.sidebar.divider()
-
-    # 指标选择
-    st.sidebar.markdown("<h4 style='color: #00d4ff;'>📊 指标选择</h4>", unsafe_allow_html=True)
-    all_metrics = sorted(df_full["指标名称_纯"].dropna().unique())
-
-    if analysis_mode == "🌍 省际对比分析":
-        selected_metric = st.sidebar.selectbox("分析指标", options=all_metrics, index=0)
-        selected_metrics = [selected_metric]
-    else:
-        selected_metrics = st.sidebar.multiselect(
-            "分析指标（最多8个）",
-            options=all_metrics,
-            default=all_metrics[:4]
-        )
-        if len(selected_metrics) > 8:
-            st.sidebar.warning("最多选择8个指标，已自动截取前8个")
-            selected_metrics = selected_metrics[:8]
-        selected_metric = selected_metrics[0] if selected_metrics else ""
-
-    # 可视化配置
-    st.sidebar.markdown("<h4 style='color: #00d4ff;'>⚙️ 显示设置</h4>", unsafe_allow_html=True)
-    with st.sidebar.expander("图表配置", expanded=False):
-        show_data_labels = st.checkbox("显示数据标签", value=False)
-        chart_height = st.slider("图表高度", min_value=350, max_value=650, value=460, step=50)
-        top_n = st.slider("排名展示数量", min_value=3, max_value=15, value=10, step=1)
-
-    # ---------- 数据过滤与前置校验 ----------
-    df_filtered = df_full[
-        (df_full["地区"].isin(selected_provinces)) &
-        (df_full["年份"] >= selected_years[0]) &
-        (df_full["年份"] <= selected_years[1]) &
-        (df_full["指标名称_纯"].isin(selected_metrics))
-    ].copy()
-
-    if len(df_filtered) == 0 or len(selected_provinces) == 0 or len(selected_metrics) == 0:
-        st.error("⚠️ 当前筛选条件下无有效数据，请调整省份、指标或年份范围后重试")
-        st.stop()
-
-    # 通用信息
-    latest_year = df_filtered["年份"].max()
-    metric_info = df_full[df_full["指标名称_纯"] == selected_metric].iloc[0] if selected_metric else None
-    metric_unit = metric_info["单位"] if metric_info is not None and pd.notna(metric_info["单位"]) else ""
-
-    # ---------- 页面头部（科技感Hero区域） ----------
-    hero_img = get_image_base64("assets/hero_banner.jpg")
-    if hero_img:
-        st.markdown(f"""
-        <div style="position: relative; width: 100%; margin-bottom: 1rem;">
-            <img src="data:image/jpeg;base64,{hero_img}" style="width: 100%; border-radius: 16px; box-shadow: 0 10px 40px rgba(0, 212, 255, 0.2);">
-            <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); text-align: center; width: 90%;">
-                <h1 style="font-size: 2.8rem; font-weight: 800; margin: 0; background: linear-gradient(135deg, #ffffff 0%, #00d4ff 50%, #3b82f6 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; text-shadow: 0 0 40px rgba(0, 212, 255, 0.5); letter-spacing: 3px;">中国省级数据库2025版</h1>
-                <p style="font-size: 1.2rem; color: rgba(255,255,255,0.9); margin-top: 0.5rem; text-shadow: 0 2px 10px rgba(0,0,0,0.5);">可视化决策支持平台 | 3000+指标 · 31省份 · 34年数据</p>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-    else:
-        st.markdown('<h1 class="main-header">中国省级数据库2025版 可视化决策平台</h1>', unsafe_allow_html=True)
-
-    # 新手引导
-    show_newbie_guide()
-
-    # 科技感分隔图
-    section_img = get_image_base64("assets/section_divider.jpg")
-    if section_img:
-        st.markdown(f"""
-        <div style="margin: 0.5rem 0; border-radius: 12px; overflow: hidden;">
-            <img src="data:image/jpeg;base64,{section_img}" style="width: 100%; height: 80px; object-fit: cover; opacity: 0.7;">
-        </div>
-        """, unsafe_allow_html=True)
-
-    # 状态栏
-    mode_desc = "省际横向对比分析" if analysis_mode == "🌍 省际对比分析" else f"{selected_provinces[0]} 多维度深度分析"
-    st.markdown(f"""
-    <div style="background: linear-gradient(90deg, rgba(0, 212, 255, 0.1) 0%, rgba(59, 130, 246, 0.1) 100%); border: 1px solid rgba(0, 212, 255, 0.2); border-radius: 12px; padding: 0.8rem 1.2rem; margin: 0.8rem 0;">
-        <p style="color: #e2e8f0; margin: 0; font-size: 0.95rem;">
-            🎯 <strong>当前模式：</strong>{mode_desc} &nbsp;&nbsp;|&nbsp;&nbsp;
-            📅 <strong>时间区间：</strong>{selected_years[0]} - {selected_years[1]}年 &nbsp;&nbsp;|&nbsp;&nbsp;
-            📍 <strong>覆盖省份：</strong>{len(selected_provinces)}个 &nbsp;&nbsp;|&nbsp;&nbsp;
-            📊 <strong>指标数：</strong>{len(selected_metrics)}个
-        </p>
+    st.markdown("""
+    <div class="hero-title">
+        <h1>沪深300股票智能预测分析平台</h1>
+        <p>绝对估值(DCF+DDM) | 相对估值(PE/PB/PS) | 多因子模型 | K线图 | 智能选股</p>
     </div>
     """, unsafe_allow_html=True)
+    st.divider()
 
-    if analysis_mode == "🌍 省际对比分析":
-        unit_display = f"（{metric_unit}）" if metric_unit else ""
-        st.markdown(f'<div class="section-desc" style="text-align: center; color: #94a3b8;">💡 指标说明：{selected_metric}{unit_display}</div>', unsafe_allow_html=True)
+    with st.sidebar:
+        st.markdown("<div class='sidebar-header'><h3>控制面板</h3></div>", unsafe_allow_html=True)
 
-    # ==================================================================
-    # 模式一：省际对比分析
-    # ==================================================================
-    if analysis_mode == "🌍 省际对比分析":
-        df_latest = df_filtered[df_filtered["年份"] == latest_year]
-        national_avg = df_full[(df_full["指标名称_纯"] == selected_metric) & (df_full["年份"] == latest_year)]["指标值"].mean()
-        df_earliest = df_filtered[df_filtered["年份"] == selected_years[0]]
-        year_span = latest_year - selected_years[0]
-        total_cagr = safe_cagr(df_earliest["指标值"].sum(), df_latest["指标值"].sum(), year_span)
-        avg_val = df_latest["指标值"].mean()
-        max_val = df_latest["指标值"].max()
-        std_val = df_latest["指标值"].std()
-        cv_val = std_val / avg_val if avg_val != 0 else 0
+        st.subheader("1. 数据时间范围")
+        col_a, col_b = st.columns(2)
+        with col_a:
+            start_date = st.date_input("开始日期", datetime(2025, 1, 1))
+        with col_b:
+            end_date = st.date_input("结束日期", datetime.now())
+        start_date_str = start_date.strftime("%Y-%m-%d")
+        end_date_str = end_date.strftime("%Y-%m-%d")
 
-        # ---- 核心统计看板 ----
-        st.markdown('<h2 class="sub-header">📊 核心指标概览</h2>', unsafe_allow_html=True)
-        st.markdown(f"""
-        <div class="stat-card-container">
-            <div class="stat-card"><div class="stat-value">{avg_val:,.2f}</div><div class="stat-label">省份均值{f"（{metric_unit}）" if metric_unit else ""}</div></div>
-            <div class="stat-card"><div class="stat-value">{national_avg:,.2f}</div><div class="stat-label">全国均值{f"（{metric_unit}）" if metric_unit else ""}</div></div>
-            <div class="stat-card"><div class="stat-value">{max_val:,.2f}</div><div class="stat-label">最高值{f"（{metric_unit}）" if metric_unit else ""}</div></div>
-            <div class="stat-card"><div class="stat-value">{cv_val:.1%}</div><div class="stat-label">省际离散度</div></div>
-            <div class="stat-card"><div class="stat-value">{total_cagr:.2%}</div><div class="stat-label">整体年均增速</div></div>
-            <div class="stat-card"><div class="stat-value">{year_span+1}</div><div class="stat-label">分析年度跨度</div></div>
+        st.subheader("2. 分析设置")
+        st.markdown("""
+        <div class="info-box" style="font-size:0.85rem;">
+            <strong>多因子模型权重:</strong><br>
+            价值因子 30% | 动量因子 25%<br>
+            质量因子 25% | 趋势因子 20%<br><br>
+            <strong>估值方法:</strong><br>
+            绝对估值: DCF + DDM<br>
+            相对估值: PE/PB/PS行业对比
         </div>
         """, unsafe_allow_html=True)
 
-        # ---- 第一行：地图 + 排名 ----
-        st.markdown('<h2 class="sub-header">🗺️ 空间分布与排名</h2>', unsafe_allow_html=True)
-        col_map, col_rank = st.columns([1.2, 1])
+        run_btn = st.button("开始智能分析", type="primary", use_container_width=True)
 
-        with col_map:
-            st.markdown('<div class="content-card">', unsafe_allow_html=True)
-            st.markdown(f'<div class="chart-title">{latest_year}年全国省级热力分布图</div>', unsafe_allow_html=True)
-            try:
-                df_map = df_latest.groupby("地区_标准")["指标值"].mean().reset_index()
-                fig_map = px.choropleth(
-                    df_map,
-                    geojson=CHINA_GEOJSON_URL,
-                    locations="地区_标准",
-                    featureidkey="properties.name",
-                    color="指标值",
-                    color_continuous_scale="Cividis",
-                    labels={"指标值": f"{selected_metric}"},
-                    template="plotly_dark",
-                    hover_data={"地区_标准": False, "指标值": ":,.2f"}
-                )
-                fig_map.update_geos(
-                    visible=False, scope="asia",
-                    center={"lat": 35, "lon": 105},
-                    projection_scale=2.2,
-                    showcountries=False, showland=False
-                )
-                fig_map.update_layout(
-                    height=chart_height + 60,
-                    margin=dict(l=0, r=30, t=0, b=0),
-                    coloraxis_colorbar=dict(title="", thickness=15, len=0.7, tickfont=dict(color="#e2e8f0"), xpad=10),
-                    paper_bgcolor="rgba(0,0,0,0)",
-                    plot_bgcolor="rgba(0,0,0,0)"
-                )
-                st.plotly_chart(fig_map, use_container_width=True)
-            except Exception:
-                st.warning("⚠️ 地图资源加载失败，已降级为条形图展示")
-                df_rank_bar = df_latest.sort_values("指标值", ascending=True).tail(top_n)
-                fig_fallback = px.bar(
-                    df_rank_bar, y="地区", x="指标值", orientation="h",
-                    color="指标值", color_continuous_scale="Cividis", template="plotly_dark"
-                )
-                fig_fallback.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
-                st.plotly_chart(fig_fallback, use_container_width=True)
-            st.markdown('</div>', unsafe_allow_html=True)
+    # ==================== 数据加载 ====================
+    df_stock = None
+    code2name = {}
 
-        with col_rank:
-            st.markdown('<div class="content-card">', unsafe_allow_html=True)
-            st.markdown(f'<div class="chart-title">省份排名 Top {top_n}（{latest_year}年）</div>', unsafe_allow_html=True)
-            df_rank = df_latest.sort_values("指标值", ascending=False).head(top_n).sort_values("指标值", ascending=True)
-            fig_rank = px.bar(
-                df_rank, y="地区", x="指标值", orientation="h",
-                color="指标值", color_continuous_scale="Cividis",
-                text_auto=".2f" if show_data_labels else False,
-                labels={"指标值": metric_unit, "地区": ""},
-                template="plotly_dark"
+    code2name, name_msg = get_hs300_constituents()
+    if code2name:
+        st.sidebar.success(name_msg)
+        if run_btn:
+            progress_bar = st.progress(0, text="准备获取数据...")
+            status_text = st.empty()
+            df_stock, data_msg = fetch_all_hs300_data(
+                code2name, start_date_str, end_date_str, progress_bar, status_text
             )
-            fig_rank.update_layout(
-                height=chart_height + 60, showlegend=True,
-                legend=dict(orientation="h", yanchor="bottom", y=-0.2, xanchor="center", x=0.5, font=dict(size=9, color="#e2e8f0")),
-                margin=dict(l=10, r=10, t=10, b=40), xaxis_title="",
-                paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-                font=dict(color="#e2e8f0")
-            )
-            st.plotly_chart(fig_rank, use_container_width=True)
-            st.markdown('</div>', unsafe_allow_html=True)
-
-        # ---- 第二行：趋势+增速组合子图 ----
-        st.markdown('<div class="content-card">', unsafe_allow_html=True)
-        st.markdown('<div class="chart-title">📈 历年趋势与同比增速组合图</div>', unsafe_allow_html=True)
-
-        fig_sub1 = make_subplots(
-            rows=1, cols=2,
-            subplot_titles=("各省份历年变化趋势", "整体年度同比增速"),
-            column_widths=[0.65, 0.35]
-        )
-
-        for prov in selected_provinces:
-            prov_data = df_filtered[df_filtered["地区"] == prov].sort_values("年份")
-            fig_sub1.add_trace(
-                go.Scatter(x=prov_data["年份"], y=prov_data["指标值"], name=prov, mode="lines+markers", line=dict(width=2)),
-                row=1, col=1
-            )
-
-        df_yearly = df_filtered.groupby("年份")["指标值"].mean().reset_index()
-        df_yearly["增速%"] = df_yearly["指标值"].pct_change() * 100
-        df_yearly = df_yearly.dropna()
-        fig_sub1.add_trace(
-            go.Bar(x=df_yearly["年份"], y=df_yearly["增速%"], name="增速%", marker_color="#00d4ff", marker_line_width=0),
-            row=1, col=2
-        )
-        fig_sub1.add_hline(y=0, line_dash="dash", line_color="gray", row=1, col=2)
-
-        fig_sub1.update_layout(
-            height=chart_height, template="plotly_dark",
-            legend=dict(orientation="v", yanchor="top", y=1.0, xanchor="left", x=1.02, font=dict(size=10, color="#e2e8f0")),
-            margin=dict(l=10, r=120, t=30, b=10),
-            colorway=CUSTOM_COLORS,
-            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-            font=dict(color="#e2e8f0")
-        )
-        fig_sub1.update_yaxes(title_text=f"{selected_metric} ({metric_unit})", row=1, col=1, gridcolor="rgba(255,255,255,0.1)")
-        fig_sub1.update_yaxes(title_text="同比增速 (%)", row=1, col=2, gridcolor="rgba(255,255,255,0.1)")
-        fig_sub1.update_xaxes(gridcolor="rgba(255,255,255,0.1)")
-        st.plotly_chart(fig_sub1, use_container_width=True)
-        st.markdown('</div>', unsafe_allow_html=True)
-
-        # ---- 第三行：箱线图 + 饼图 + 热力矩阵 ----
-        col_box, col_pie, col_heat = st.columns([1, 1, 1.2])
-
-        with col_box:
-            st.markdown('<div class="content-card">', unsafe_allow_html=True)
-            st.markdown('<div class="chart-title">📦 分地域分布箱线图</div>', unsafe_allow_html=True)
-            fig_box = px.box(
-                df_filtered, x="所属地域", y="指标值", color="所属地域",
-                points="outliers", template="plotly_dark",
-                labels={"指标值": metric_unit, "所属地域": ""},
-                color_discrete_sequence=CUSTOM_COLORS
-            )
-            fig_box.update_layout(height=chart_height, showlegend=True,
-                                  legend=dict(orientation="h", yanchor="bottom", y=-0.25, xanchor="center", x=0.5, font=dict(size=9, color="#e2e8f0")),
-                                  margin=dict(l=10, r=10, t=10, b=40),
-                                  paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font=dict(color="#e2e8f0"))
-            st.plotly_chart(fig_box, use_container_width=True)
-            st.markdown('</div>', unsafe_allow_html=True)
-
-        with col_pie:
-            st.markdown('<div class="content-card">', unsafe_allow_html=True)
-            st.markdown(f'<div class="chart-title">🥧 {latest_year}年省份占比</div>', unsafe_allow_html=True)
-            df_pie = df_latest.sort_values("指标值", ascending=False).head(10)
-            fig_pie = px.pie(
-                df_pie, values="指标值", names="地区", hole=0.4,
-                template="plotly_dark",
-                color_discrete_sequence=CUSTOM_COLORS
-            )
-            fig_pie.update_traces(textinfo="percent+label", textfont_size=10, textfont_color="#e2e8f0", pull=[0.02]*10)
-            fig_pie.update_layout(
-                height=chart_height,
-                legend=dict(orientation="v", yanchor="top", y=1.0, xanchor="left", x=1.02, font=dict(size=9, color="#e2e8f0")),
-                margin=dict(l=10, r=120, t=10, b=10),
-                paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)"
-            )
-            st.plotly_chart(fig_pie, use_container_width=True)
-            st.markdown('</div>', unsafe_allow_html=True)
-
-        with col_heat:
-            st.markdown('<div class="content-card">', unsafe_allow_html=True)
-            st.markdown('<div class="chart-title">🔬 省份发展聚类分析（规模 vs 增速）</div>', unsafe_allow_html=True)
-            # 聚类分析：将省份按最新值和年均增速分为四个象限
-            cluster_data = []
-            year_span = selected_years[1] - selected_years[0]
-            for prov in df_latest["地区"].unique():
-                prov_data = df_filtered[df_filtered["地区"] == prov].sort_values("年份")
-                if len(prov_data) >= 2:
-                    s_val = prov_data.iloc[0]["指标值"]
-                    e_val = prov_data.iloc[-1]["指标值"]
-                    cagr = safe_cagr(s_val, e_val, year_span)
-                    latest_val = prov_data.iloc[-1]["指标值"]
-                    cluster_data.append({
-                        "地区": prov,
-                        "最新值": latest_val,
-                        "年均增速": cagr
-                    })
-            if len(cluster_data) >= 3:
-                df_cluster = pd.DataFrame(cluster_data)
-                median_val = df_cluster["最新值"].median()
-                median_cagr = df_cluster["年均增速"].median()
-                df_cluster["发展类型"] = df_cluster.apply(
-                    lambda r: "明星型（高规模高增长）" if r["最新值"] >= median_val and r["年均增速"] >= median_cagr else
-                              "现金牛型（高规模低增长）" if r["最新值"] >= median_val else
-                              "问题型（低规模高增长）" if r["年均增速"] >= median_cagr else
-                              "瘦狗型（低规模低增长）", axis=1
-                )
-                color_map = {
-                    "明星型（高规模高增长）": "#10b981",
-                    "现金牛型（高规模低增长）": "#f59e0b",
-                    "问题型（低规模高增长）": "#3b82f6",
-                    "瘦狗型（低规模低增长）": "#ef4444"
-                }
-                fig_cluster = px.scatter(
-                    df_cluster, x="最新值", y="年均增速", color="发展类型",
-                    hover_name="地区", text="地区",
-                    color_discrete_map=color_map,
-                    template="plotly_dark",
-                    labels={"最新值": f"最新规模 ({metric_unit})", "年均增速": "年均增速"}
-                )
-                fig_cluster.update_traces(textposition="top center", textfont=dict(size=10, color="#e2e8f0"))
-                fig_cluster.add_vline(x=median_val, line_dash="dash", line_color="rgba(255,255,255,0.3)")
-                fig_cluster.add_hline(y=median_cagr, line_dash="dash", line_color="rgba(255,255,255,0.3)")
-                fig_cluster.update_layout(
-                    height=chart_height,
-                    legend=dict(orientation="h", yanchor="bottom", y=-0.3, xanchor="center", x=0.5, font_color="#e2e8f0"),
-                    margin=dict(l=10, r=10, t=10, b=10),
-                    paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-                    font=dict(color="#e2e8f0")
-                )
-                st.plotly_chart(fig_cluster, use_container_width=True)
+            if df_stock is not None:
+                st.success(data_msg)
             else:
-                st.info("聚类分析数据不足")
-            st.markdown('</div>', unsafe_allow_html=True)
-
-        # ---- 第四行：省份规模-增速气泡图（替代词云图） ----
-        st.markdown('<div class="content-card">', unsafe_allow_html=True)
-        st.markdown(f'<div class="chart-title">🫧 {latest_year}年省份规模-增速气泡图</div>', unsafe_allow_html=True)
-        bubble_fig = generate_bubble_scatter(df_filtered, selected_years, metric_unit)
-        if bubble_fig:
-            st.plotly_chart(bubble_fig, use_container_width=True)
-        else:
-            st.info("气泡图数据不足，请确保选择多个省份和年份")
-        st.markdown('</div>', unsafe_allow_html=True)
-
-        # ---- 省级诊断建议 ----
-        st.markdown('<h2 class="sub-header">💡 分省诊断与发展建议</h2>', unsafe_allow_html=True)
-        df_latest_sorted = df_latest.sort_values("指标值", ascending=False).reset_index(drop=True)
-        total_prov_count = df_full[df_full["年份"] == latest_year]["地区"].nunique()
-
-        for idx, row in df_latest_sorted.iterrows():
-            prov = row["地区"]
-            val = row["指标值"]
-            rank = idx + 1
-            vs_nat = val / national_avg if national_avg else 0
-
-            prov_data = df_filtered[df_filtered["地区"] == prov].sort_values("年份")
-            if len(prov_data) >= 2:
-                s_val = prov_data.iloc[0]["指标值"]
-                e_val = prov_data.iloc[-1]["指标值"]
-                span = int(prov_data.iloc[-1]["年份"] - prov_data.iloc[0]["年份"])
-                cagr = safe_cagr(s_val, e_val, span)
-            else:
-                cagr = 0
-
-            rank_pct = rank / total_prov_count if total_prov_count else 0
-            if rank_pct <= 0.25:
-                tier, tier_cls = "第一梯队（全国领先）", "suggestion-advantage"
-            elif rank_pct <= 0.5:
-                tier, tier_cls = "第二梯队（中上游）", "suggestion-trend"
-            elif rank_pct <= 0.75:
-                tier, tier_cls = "第三梯队（中下游）", "suggestion-weakness"
-            else:
-                tier, tier_cls = "第四梯队（追赶型）", "suggestion-weakness"
-
-            unit_str = f" {metric_unit}" if metric_unit else ""
-            with st.expander(f"📍 {prov} | 全国第{rank}名 | {val:,.2f}{unit_str}", expanded=(idx < 3)):
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.markdown(f"""
-                    <div class="suggestion-box {tier_cls}">
-                        <div class="suggestion-title">综合梯队定位</div>
-                        <div class="suggestion-text">处于全国<b>{tier}</b></div>
-                        <div class="data-basis">全国排名第{rank}位 / 共{total_prov_count}个省份</div>
-                    </div>
-                    """, unsafe_allow_html=True)
-                with col2:
-                    st.markdown(f"""
-                    <div class="suggestion-box suggestion-conclusion">
-                        <div class="suggestion-title">相对全国水平</div>
-                        <div class="suggestion-text">为全国均值的<b>{vs_nat:.1%}</b></div>
-                        <div class="data-basis">全国均值 {national_avg:,.2f}{f" {metric_unit}" if metric_unit else ""}</div>
-                    </div>
-                    """, unsafe_allow_html=True)
-
-                col3, col4 = st.columns(2)
-                with col3:
-                    st.markdown(f"""
-                    <div class="suggestion-box suggestion-trend">
-                        <div class="suggestion-title">年均复合增速</div>
-                        <div class="suggestion-text"><b>{cagr:.2%}</b></div>
-                        <div class="data-basis">{selected_years[0]}-{selected_years[1]}年</div>
-                    </div>
-                    """, unsafe_allow_html=True)
-                with col4:
-                    bench_prov = df_latest_sorted.iloc[idx-1]["地区"] if idx > 0 else "暂无"
-                    bench_val = df_latest_sorted.iloc[idx-1]["指标值"] if idx > 0 else 0
-                    gap = (bench_val - val) / val if val > 0 and idx > 0 else 0
-                    st.markdown(f"""
-                    <div class="suggestion-box" style="background:linear-gradient(90deg, rgba(30,41,59,0.6) 0%, rgba(15,23,42,0.4) 100%); border-color:#64748b;">
-                        <div class="suggestion-title">对标追赶对象</div>
-                        <div class="suggestion-text"><b>{bench_prov}</b></div>
-                        <div class="data-basis">差距 {gap:.1%}，目标值 {bench_val:,.2f}{f" {metric_unit}" if metric_unit else ""}</div>
-                    </div>
-                    """, unsafe_allow_html=True)
-
-                suggestions = []
-                if vs_nat < 0.8:
-                    suggestions.append(f"**补短板**：当前指标仅为全国均值的{vs_nat:.0%}，需加大核心要素投入，重点提升总量规模，力争3-5年达到全国平均水平")
-                if cagr < 0.03:
-                    suggestions.append("**增动能**：增长速度偏低，需培育新增长引擎，优化产业结构，提升发展内生动力")
-                if rank_pct <= 0.25:
-                    suggestions.append("**固优势**：保持全国领先地位，发挥示范引领作用，探索高质量发展新路径，形成可复制经验")
-                if 0.25 < rank_pct <= 0.5:
-                    suggestions.append("**促提升**：巩固现有基础，向第一梯队省份对标学习，突破瓶颈制约，争取位次前移")
-                suggestions.append("**区域协同**：加强与周边省份的产业协作与要素流动，融入区域发展大局，实现协同增长")
-
-                st.markdown("##### 📌 针对性发展建议")
-                for s in suggestions:
-                    st.markdown(f"- {s}")
-
-    # ==================================================================
-    # 模式二：单省深度分析
-    # ==================================================================
+                st.error(data_msg)
     else:
-        prov_name = selected_provinces[0]
-        df_prov = df_filtered[df_filtered["地区"] == prov_name].copy()
-        df_prov_latest = df_prov[df_prov["年份"] == latest_year]
+        st.error(name_msg)
 
-        above_avg_count = 0
-        for m in selected_metrics:
-            m_val = df_prov_latest[df_prov_latest["指标名称_纯"] == m]["指标值"].mean()
-            nat_avg = df_full[(df_full["指标名称_纯"] == m) & (df_full["年份"] == latest_year)]["指标值"].mean()
-            if pd.notna(m_val) and pd.notna(nat_avg) and m_val > nat_avg:
-                above_avg_count += 1
+    # ==================== 主页面内容 ====================
+    if df_stock is not None and len(df_stock) > 0:
+        st.subheader("数据概览")
+        c1, c2, c3, c4, c5 = st.columns(5)
+        c1.metric("总数据行数", f"{len(df_stock):,}")
+        c2.metric("覆盖个股数", df_stock["股票代码"].nunique())
+        c3.metric("数据起始日", df_stock["日期"].min().strftime("%Y-%m-%d"))
+        c4.metric("数据截止日", df_stock["日期"].max().strftime("%Y-%m-%d"))
+        c5.metric("平均日涨跌幅", f"{df_stock.groupby('日期')['涨跌幅'].mean().iloc[-1]:.2f}%")
 
-        st.markdown('<h2 class="sub-header">📊 综合发展概览</h2>', unsafe_allow_html=True)
-        st.markdown(f"""
-        <div class="stat-card-container">
-            <div class="stat-card"><div class="stat-value">{len(selected_metrics)}</div><div class="stat-label">分析指标数</div></div>
-            <div class="stat-card"><div class="stat-value">{above_avg_count}</div><div class="stat-label">领先全国指标数</div></div>
-            <div class="stat-card"><div class="stat-value">{above_avg_count/len(selected_metrics):.1%}</div><div class="stat-label">指标领先占比</div></div>
-            <div class="stat-card"><div class="stat-value">{latest_year}</div><div class="stat-label">最新数据年份</div></div>
-            <div class="stat-card"><div class="stat-value">{selected_years[1]-selected_years[0]+1}</div><div class="stat-label">分析年度跨度</div></div>
-            <div class="stat-card"><div class="stat-value">{prov_name}</div><div class="stat-label">分析省份</div></div>
-        </div>
-        """, unsafe_allow_html=True)
+        with st.expander("查看数据样例（前20行）"):
+            st.dataframe(df_stock.head(20), use_container_width=True, hide_index=True)
+        st.divider()
 
-        # ---- 第一行：雷达图 + 词云 ----
-        st.markdown('<h2 class="sub-header">🕸️ 多维度结构分析</h2>', unsafe_allow_html=True)
-        col_radar, col_wc = st.columns(2)
+        tab1, tab2, tab3, tab4, tab5 = st.tabs([
+            "市场概览", "个股深度分析", "智能选股", "价格预测", "风险分析"
+        ])
 
-        with col_radar:
-            st.markdown('<div class="content-card">', unsafe_allow_html=True)
-            st.markdown(f'<div class="chart-title">{latest_year}年指标雷达对比（vs全国均值）</div>', unsafe_allow_html=True)
-
-            radar_data = []
-            for m in selected_metrics:
-                prov_val = df_prov_latest[df_prov_latest["指标名称_纯"] == m]["指标值"].mean()
-                nat_val = df_full[(df_full["指标名称_纯"] == m) & (df_full["年份"] == latest_year)]["指标值"].mean()
-                if pd.notna(prov_val) and pd.notna(nat_val) and nat_val > 0:
-                    radar_data.append({"指标": m, prov_name: round(prov_val / nat_val, 3), "全国平均": 1.0})
-
-            if len(radar_data) >= 3:
-                df_radar = pd.DataFrame(radar_data)
-                fig_radar = go.Figure()
-                fig_radar.add_trace(go.Scatterpolar(
-                    r=df_radar[prov_name], theta=df_radar["指标"],
-                    fill="toself", name=prov_name, line_color="#00d4ff", fillcolor="rgba(0, 212, 255, 0.2)"
-                ))
-                fig_radar.add_trace(go.Scatterpolar(
-                    r=df_radar["全国平均"], theta=df_radar["指标"],
-                    fill="toself", name="全国平均", line_color="#64748b", fillcolor="rgba(100, 116, 139, 0.1)"
-                ))
-                max_r = max(df_radar[prov_name].max(), 1.5)
-                fig_radar.update_layout(
-                    polar=dict(radialaxis=dict(visible=True, range=[0, max_r], gridcolor="rgba(255,255,255,0.1)"), angularaxis=dict(gridcolor="rgba(255,255,255,0.1)")),
-                    height=chart_height + 20, template="plotly_dark",
-                    legend=dict(orientation="h", yanchor="bottom", y=-0.15, xanchor="center", x=0.5, font_color="#e2e8f0"),
-                    margin=dict(l=10, r=10, t=20, b=40),
-                    paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)"
-                )
-                st.plotly_chart(fig_radar, use_container_width=True)
-            else:
-                st.info("请选择至少3个指标以生成雷达图")
-            st.markdown('</div>', unsafe_allow_html=True)
-
-        with col_wc:
-            st.markdown('<div class="content-card">', unsafe_allow_html=True)
-            st.markdown(f'<div class="chart-title">📊 指标规模-增速矩阵图</div>', unsafe_allow_html=True)
-            # 单省模式下：各指标最新值 vs 年均增速散点图
-            metric_scatter_data = []
-            for m in selected_metrics:
-                m_data = df_prov[df_prov["指标名称_纯"] == m].sort_values("年份")
-                if len(m_data) >= 2:
-                    s_val = m_data.iloc[0]["指标值"]
-                    e_val = m_data.iloc[-1]["指标值"]
-                    span = int(m_data.iloc[-1]["年份"] - m_data.iloc[0]["年份"])
-                    cagr = safe_cagr(s_val, e_val, span)
-                    latest_val = m_data.iloc[-1]["指标值"]
-                    nat_avg = df_full[(df_full["指标名称_纯"] == m) & (df_full["年份"] == latest_year)]["指标值"].mean()
-                    vs_nat = latest_val / nat_avg if nat_avg and nat_avg > 0 else 0
-                    metric_scatter_data.append({
-                        "指标": m,
-                        "最新值": latest_val,
-                        "年均增速": cagr,
-                        "相对全国": vs_nat,
-                        "发展类型": "高规模高增长" if latest_val > nat_avg and cagr > 0.05 else
-                                   "高规模低增长" if latest_val > nat_avg else
-                                   "低规模高增长" if cagr > 0.05 else "低规模低增长"
-                    })
-            if len(metric_scatter_data) >= 3:
-                df_ms = pd.DataFrame(metric_scatter_data)
-                fig_ms = px.scatter(
-                    df_ms, x="最新值", y="年均增速", size="相对全国", color="发展类型",
-                    hover_name="指标", text="指标",
-                    color_discrete_map={"高规模高增长": "#10b981", "高规模低增长": "#f59e0b",
-                                        "低规模高增长": "#3b82f6", "低规模低增长": "#ef4444"},
-                    template="plotly_dark",
-                    labels={"最新值": "指标规模", "年均增速": "年均增速"}
-                )
-                fig_ms.update_traces(textposition="top center", textfont=dict(size=9, color="#e2e8f0"))
-                fig_ms.add_hline(y=0, line_dash="dash", line_color="gray")
-                fig_ms.update_layout(
-                    height=chart_height + 20,
-                    legend=dict(orientation="h", yanchor="bottom", y=-0.25, xanchor="center", x=0.5, font_color="#e2e8f0"),
-                    margin=dict(l=10, r=10, t=10, b=10),
-                    paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-                    font=dict(color="#e2e8f0")
-                )
-                st.plotly_chart(fig_ms, use_container_width=True)
-            else:
-                st.info("请选择至少3个指标以生成分散矩阵图")
-            st.markdown('</div>', unsafe_allow_html=True)
-
-        # ---- 第二行：2×2 多指标趋势子图 ----
-        st.markdown('<div class="content-card">', unsafe_allow_html=True)
-        st.markdown('<div class="chart-title">📈 多指标历年趋势子图（前4个指标）</div>', unsafe_allow_html=True)
-
-        plot_metrics = selected_metrics[:4]
-        fig_multi = make_subplots(
-            rows=2, cols=2,
-            subplot_titles=plot_metrics,
-            vertical_spacing=0.15, horizontal_spacing=0.12
-        )
-
-        for i, m in enumerate(plot_metrics):
-            row = i // 2 + 1
-            col = i % 2 + 1
-            m_data = df_prov[df_prov["指标名称_纯"] == m].sort_values("年份")
-            unit = df_full[df_full["指标名称_纯"] == m]["单位"].iloc[0] if len(df_full[df_full["指标名称_纯"] == m]) > 0 else ""
-
-            fig_multi.add_trace(
-                go.Scatter(x=m_data["年份"], y=m_data["指标值"], name=m,
-                          mode="lines+markers", line=dict(width=2.5, color=CUSTOM_COLORS[i % len(CUSTOM_COLORS)]), showlegend=False),
-                row=row, col=col
-            )
-            fig_multi.update_yaxes(title_text=unit, row=row, col=col, gridcolor="rgba(255,255,255,0.1)")
-
-        fig_multi.update_layout(
-            height=chart_height + 120, template="plotly_dark",
-            margin=dict(l=10, r=10, t=40, b=10),
-            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-            font=dict(color="#e2e8f0"),
-            showlegend=False
-        )
-        fig_multi.update_xaxes(gridcolor="rgba(255,255,255,0.1)")
-        st.plotly_chart(fig_multi, use_container_width=True)
-        st.markdown('</div>', unsafe_allow_html=True)
-
-        # ---- 第三行：增速对比 + 规模对比 ----
-        col_growth, col_bar = st.columns(2)
-
-        with col_growth:
-            st.markdown('<div class="content-card">', unsafe_allow_html=True)
-            st.markdown('<div class="chart-title">📉 各指标年均复合增速对比</div>', unsafe_allow_html=True)
-
-            cagr_list = []
-            for m in selected_metrics:
-                m_data = df_prov[df_prov["指标名称_纯"] == m].sort_values("年份")
-                if len(m_data) >= 2:
-                    s_val = m_data.iloc[0]["指标值"]
-                    e_val = m_data.iloc[-1]["指标值"]
-                    span = int(m_data.iloc[-1]["年份"] - m_data.iloc[0]["年份"])
-                    cagr = safe_cagr(s_val, e_val, span)
-                    cagr_list.append({"指标": m, "年均增速": cagr})
-
-            if cagr_list:
-                df_cagr = pd.DataFrame(cagr_list).sort_values("年均增速", ascending=True)
-                fig_cagr = px.bar(
-                    df_cagr, y="指标", x="年均增速", orientation="h",
-                    color="年均增速", color_continuous_scale="Cividis",
-                    text_auto=".2%", template="plotly_dark"
-                )
-                fig_cagr.add_vline(x=0, line_dash="dash", line_color="gray")
-                fig_cagr.update_layout(height=chart_height, showlegend=True,
-                                       legend=dict(orientation="h", yanchor="bottom", y=-0.2, xanchor="center", x=0.5, font=dict(size=9, color="#e2e8f0")),
-                                       margin=dict(l=10, r=10, t=10, b=40),
-                                       paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font=dict(color="#e2e8f0"))
-                st.plotly_chart(fig_cagr, use_container_width=True)
-            st.markdown('</div>', unsafe_allow_html=True)
-
-        with col_bar:
-            st.markdown('<div class="content-card">', unsafe_allow_html=True)
-            st.markdown(f'<div class="chart-title">📊 {latest_year}年指标规模对比</div>', unsafe_allow_html=True)
-            df_bar = df_prov_latest.sort_values("指标值", ascending=True)
-            fig_bar = px.bar(
-                df_bar, y="指标名称_纯", x="指标值", orientation="h",
-                color="指标值", color_continuous_scale="Cividis",
-                text_auto=".2f" if show_data_labels else False,
-                template="plotly_dark"
-            )
-            fig_bar.update_layout(height=chart_height, showlegend=True,
-                                  legend=dict(orientation="h", yanchor="bottom", y=-0.2, xanchor="center", x=0.5, font=dict(size=9, color="#e2e8f0")),
-                                  margin=dict(l=10, r=10, t=10, b=40),
-                                  paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font=dict(color="#e2e8f0"))
-            st.plotly_chart(fig_bar, use_container_width=True)
-            st.markdown('</div>', unsafe_allow_html=True)
-
-        # ---- 综合诊断与建议 ----
-        st.markdown('<h2 class="sub-header">💡 综合诊断与发展建议</h2>', unsafe_allow_html=True)
-
-        detail_list = []
-        for m in selected_metrics:
-            m_val = df_prov_latest[df_prov_latest["指标名称_纯"] == m]["指标值"].mean()
-            nat_avg = df_full[(df_full["指标名称_纯"] == m) & (df_full["年份"] == latest_year)]["指标值"].mean()
-            unit = df_full[df_full["指标名称_纯"] == m]["单位"].iloc[0] if len(df_full[df_full["指标名称_纯"] == m]) > 0 else ""
-
-            m_data = df_prov[df_prov["指标名称_纯"] == m].sort_values("年份")
-            cagr = safe_cagr(m_data.iloc[0]["指标值"], m_data.iloc[-1]["指标值"],
-                           int(m_data.iloc[-1]["年份"] - m_data.iloc[0]["年份"])) if len(m_data) >= 2 else 0
-
-            vs_nat = m_val / nat_avg if nat_avg and nat_avg > 0 else 0
-            status = "✅ 领先" if vs_nat >= 1.1 else "⚠️ 持平" if vs_nat >= 0.9 else "❌ 落后"
-
-            detail_list.append({
-                "指标名称": m, f"{prov_name}值": round(m_val, 2),
-                "全国均值": round(nat_avg, 2), "单位": unit,
-                "相对水平": f"{vs_nat:.1%}", "年均增速": f"{cagr:.2%}",
-                "发展状态": status
-            })
-
-        tab1, tab2 = st.tabs(["📋 指标详情对比", "📌 综合发展建议"])
+        # ---- Tab1: 市场概览 ----
         with tab1:
-            st.dataframe(pd.DataFrame(detail_list), use_container_width=True, hide_index=True)
+            st.markdown("### 沪深300成分股整体走势")
+            fig_overview = draw_index_overview(df_stock)
+            st.plotly_chart(fig_overview, use_container_width=True)
 
+        # ---- Tab2: 个股深度分析 ----
         with tab2:
-            adv_metrics = [d["指标名称"] for d in detail_list if d["发展状态"] == "✅ 领先"]
-            weak_metrics = [d["指标名称"] for d in detail_list if d["发展状态"] == "❌ 落后"]
-            slow_metrics = [d["指标名称"] for d in detail_list if float(d["年均增速"].strip('%'))/100 < 0.03]
+            st.markdown("### 选择个股进行深度估值分析")
+            available_stocks = sorted(df_stock["股票代码"].unique())
+            stock_options = {str(c): f"{code2name.get(c, '未知')}({c})" for c in available_stocks}
+            selected_stock = st.selectbox(
+                "选择股票", options=list(stock_options.keys()),
+                format_func=lambda x: stock_options[x], key="tech_stock_select"
+            )
 
-            st.markdown(f"""
-            <div class="suggestion-box suggestion-conclusion">
-                <div class="suggestion-title">综合评价</div>
-                <div class="suggestion-text">
-                    本次分析的 <b>{len(selected_metrics)}个指标</b> 中，
-                    <b style="color:#10b981;">领先指标 {len(adv_metrics)} 个</b>，
-                    <b style="color:#ef4444;">落后指标 {len(weak_metrics)} 个</b>，
-                    整体发展{"较为均衡，优势突出" if len(adv_metrics) > len(selected_metrics)/2 else "存在明显短板，需重点突破"}。
-                </div>
+            if selected_stock:
+                code_int = int(selected_stock)
+                s_df = df_stock[df_stock["股票代码"] == code_int].sort_values("日期").reset_index(drop=True)
+                stock_name = code2name.get(code_int, "未知")
+
+                if len(s_df) >= 30:
+                    s_df_calc = calc_technical_indicators(s_df)
+                    latest = s_df_calc.iloc[-1]
+
+                    code_str = str(code_int).zfill(6)
+                    info = get_stock_individual_info(code_str)
+                    fin_df = get_stock_financial_indicators(code_str)
+                    ddm = calc_ddm_valuation(latest["收盘"], fin_df)
+                    dcf = calc_dcf_valuation(code_str, latest["收盘"], fin_df)
+                    relative = calc_relative_valuation(code_str, latest["收盘"], fin_df, info.get("行业", ""))
+                    factor_scores = calc_multi_factor_score(s_df, ddm, dcf, relative, fin_df)
+
+                    # 基本信息
+                    st.markdown(f"""
+                    <div class="info-box">
+                        <strong>{stock_name}({code_int})</strong> |
+                        <strong>行业:</strong> {info.get('行业', '未知')}（{classify_industry(info.get('行业', ''))}） |
+                        <strong>总股本:</strong> {info.get('总股本', 'N/A')} |
+                        <strong>总市值:</strong> {info.get('总市值', 'N/A')} |
+                        <strong>上市时间:</strong> {info.get('上市时间', 'N/A')}
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                    # 绝对估值: DCF
+                    st.markdown(f"""
+                    <div class="valuation-box">
+                        <h4>绝对估值法 - DCF现金流折现模型</h4>
+                        <p><strong>每股内在价值:</strong> {dcf['内在价值']}元 |
+                        <strong>当前价格:</strong> {dcf['当前价格']}元 |
+                        <strong>估值溢价:</strong> <span style="color:{dcf['估值颜色']}">{dcf['估值溢价']}% ({dcf['估值判断']})</span></p>
+                        <p><strong>企业价值(EV):</strong> {dcf['企业价值']}亿元 |
+                        <strong>股权价值:</strong> {dcf['股权价值']}亿元 |
+                        <strong>WACC:</strong> {dcf['WACC']}%</p>
+                        <p><strong>预测期FCFF现值:</strong> {dcf['预测期FCFF现值']}亿元 |
+                        <strong>终值现值:</strong> {dcf['终值现值']}亿元 |
+                        <strong>FCFF:</strong> {dcf['FCFF']}亿元</p>
+                        <p><strong>高增长期增长率:</strong> {dcf['高增长期增长率']}% |
+                        <strong>永续增长率:</strong> {dcf['永续增长率']}%</p>
+                        <p><small>两阶段DCF模型: 预测期({dcf['高增长期增长率']}%增长) + 永续期({dcf['永续增长率']}%增长)，折现率WACC={dcf['WACC']}%</small></p>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                    # 绝对估值: DDM
+                    st.markdown(f"""
+                    <div class="valuation-box">
+                        <h4>绝对估值法 - DDM股利贴现模型</h4>
+                        <p><strong>每股内在价值:</strong> {ddm['内在价值']}元 |
+                        <strong>当前价格:</strong> {ddm['当前价格']}元 |
+                        <strong>估值溢价:</strong> <span style="color:{ddm['估值颜色']}">{ddm['估值溢价']}% ({ddm['估值判断']})</span></p>
+                        <p><strong>每股股利(DPS):</strong> {ddm['每股股利']} |
+                        <strong>折现率(r):</strong> {ddm['折现率']}% |
+                        <strong>永续增长率(g):</strong> {ddm['永续增长率']}%</p>
+                        <p><strong>ROE:</strong> {ddm['ROE']}% |
+                        <strong>EPS:</strong> {ddm['EPS']} |
+                        <strong>PE:</strong> {ddm['PE']} |
+                        <strong>PB:</strong> {ddm['PB']}</p>
+                        <p><small>戈登增长模型: V = D1 / (r - g)。折现率r = 无风险利率(2.5%) + Beta * 市场风险溢价(6%)</small></p>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                    # 相对估值法
+                    st.markdown(f"""
+                    <div class="factor-box">
+                        <h4>相对估值法 - 行业对比分析</h4>
+                        <p><strong>PE:</strong> {relative['PE']} <span style="color:{relative['PE颜色']}">({relative['PE判断']})</span> |
+                        <strong>行业PE区间:</strong> {relative['行业PE区间']}</p>
+                        <p><strong>PB:</strong> {relative['PB']} <span style="color:{relative['PB颜色']}">({relative['PB判断']})</span> |
+                        <strong>行业PB区间:</strong> {relative['行业PB区间']}</p>
+                        <p><strong>PS:</strong> {relative['PS']} <span style="color:{relative['PS颜色']}">({relative['PS判断']})</span> |
+                        <strong>行业PS区间:</strong> {relative['行业PS区间']}</p>
+                        <p><strong>EV/EBITDA:</strong> {relative['EV/EBITDA']}</p>
+                        <p><strong>综合判断:</strong> <span style="color:{relative['综合颜色']};font-weight:bold">{relative['综合判断']}</span></p>
+                        <p><small>相对估值法通过与行业平均水平对比，判断股票估值高低</small></p>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                    # 多因子评分
+                    st.markdown(f"""
+                    <div class="factor-box">
+                        <h4>多因子综合评分: {factor_scores['综合评分']:.1f}分</h4>
+                        <p>价值因子: {factor_scores['价值因子']:.0f}分 |
+                        动量因子: {factor_scores['动量因子']:.0f}分 |
+                        质量因子: {factor_scores['质量因子']:.0f}分 |
+                        趋势因子: {factor_scores['趋势因子']:.0f}分</p>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                    # 雷达图
+                    fig_radar = draw_factor_radar(factor_scores)
+                    st.plotly_chart(fig_radar, use_container_width=True)
+
+                    # 技术指标
+                    mc1, mc2, mc3, mc4, mc5, mc6 = st.columns(6)
+                    mc1.metric("最新收盘价", f"{latest['收盘']:.2f}元")
+                    mc2.metric("RSI(14)", f"{latest['RSI']:.1f}",
+                              "超买" if latest['RSI'] > 70 else ("超卖" if latest['RSI'] < 30 else "中性"))
+                    mc3.metric("MACD", f"{latest['MACD']:.4f}",
+                              "金叉" if latest['DIF'] > latest['DEA'] else "死叉")
+                    mc4.metric("20日涨幅", f"{factor_scores['20日涨幅']:.2f}%")
+                    mc5.metric("60日涨幅", f"{factor_scores['60日涨幅']:.2f}%")
+                    mc6.metric("年化波动率", f"{factor_scores['年化波动率']:.1f}%")
+
+                    # K线图
+                    fig_kline = draw_stock_kline(s_df_calc, stock_name, code_int)
+                    st.plotly_chart(fig_kline, use_container_width=True)
+                else:
+                    st.warning(f"{stock_name} 数据不足30条，无法进行技术分析")
+
+        # ---- Tab3: 智能选股 ----
+        with tab3:
+            st.markdown("### 多因子模型智能选股")
+            st.markdown("""
+            <div class="info-box">
+                <strong>选股模型说明：</strong><br>
+                基于价值因子(30%) + 动量因子(25%) + 质量因子(25%) + 趋势因子(20%)进行综合评分。<br>
+                价值因子整合DCF现金流折现、DDM股利贴现、相对估值(PE/PB/PS)三种估值方法。<br>
+                筛选出沪深300中综合得分最高的5只优质个股。
             </div>
             """, unsafe_allow_html=True)
 
-            st.markdown("##### 1. 巩固优势领域")
-            if adv_metrics:
-                st.markdown(f"持续强化 **{', '.join(adv_metrics)}** 等领先指标的竞争优势，发挥辐射带动作用，打造特色发展名片，形成区域标杆效应。")
+            stock_res, pick_msg = stock_filter_and_pick(df_stock, code2name)
+            if stock_res is None:
+                st.error(pick_msg)
             else:
-                st.markdown("暂无显著领先指标，建议优先培育1-2个核心优势领域，集中资源突破，形成发展亮点。")
+                st.success(pick_msg)
 
-            st.markdown("##### 2. 补齐短板弱项")
-            if weak_metrics:
-                st.markdown(f"重点补齐 **{', '.join(weak_metrics)}** 等短板指标，对标全国先进省份，深入分析差距成因，制定专项提升方案，加大投入力度，力争3-5年内接近或达到全国平均水平。")
-            else:
-                st.markdown("无明显短板指标，整体发展较为均衡，重点在于提质增效，向高质量发展转型。")
+                display_cols = ["序号", "股票代码", "股票名称", "最新收盘价", "综合评分",
+                               "价值因子", "动量因子", "质量因子", "趋势因子",
+                               "20日涨幅", "60日涨幅", "行业", "行业大类"]
+                df_res = pd.DataFrame([{k: v for k, v in item.items() if k in display_cols}
+                                       for item in stock_res])
+                st.dataframe(df_res, use_container_width=True, hide_index=True)
+                st.divider()
 
-            st.markdown("##### 3. 提升增长动能")
-            if slow_metrics:
-                st.markdown(f"针对 **{', '.join(slow_metrics)}** 等增速放缓的指标，深入挖掘增长瓶颈，创新发展模式，培育新的增长点，推动指标增速回升至全国平均水平以上。")
-            else:
-                st.markdown("各项指标增长态势良好，继续保持当前发展节奏，稳步提升发展质量与效益。")
+                st.markdown("### 个股详细分析与投资建议")
+                for item in stock_res:
+                    ddm = item["DDM估值"]
+                    dcf = item["DCF估值"]
+                    relative = item["相对估值"]
+                    advice = item["投资建议"]
 
-            st.markdown("##### 4. 区域协同发展")
-            st.markdown("积极融入国家区域重大战略，加强与周边省份的产业协作、人才交流和要素流动，通过区域联动实现优势互补、互利共赢，提升整体发展能级。")
+                    with st.expander(
+                        f"第{item['序号']}只: {item['股票名称']}({item['股票代码']}) | "
+                        f"综合评分: {item['综合评分']:.1f} | "
+                        f"DCF: {dcf['估值判断']} | DDM: {ddm['估值判断']} | "
+                        f"适合度: {advice['适合度评级']}",
+                        expanded=True
+                    ):
+                        # 适合度评级
+                        st.markdown(f"""
+                        <div style="background: {advice['适合度颜色']}15; padding: 12px; border-radius: 8px;
+                                    border-left: 4px solid {advice['适合度颜色']}; margin-bottom: 10px;">
+                            <strong>当前适合度评级: {advice['适合度评级']}</strong> |
+                            <strong>未来投资建议: <span style="color:{advice['未来适合颜色']}">{advice['未来适合投资']}</span></strong>
+                        </div>
+                        """, unsafe_allow_html=True)
 
-    # ==================================================================
-    # 数据导出模块
-    # ==================================================================
-    st.markdown('<h2 class="sub-header">📋 数据预览与导出</h2>', unsafe_allow_html=True)
-    st.markdown('<div class="content-card">', unsafe_allow_html=True)
+                        # 行业信息
+                        st.markdown(f"""
+                        <div class="info-box">
+                            <strong>行业分类：</strong>{item['行业']}（{item['行业大类']}）<br>
+                            <strong>20日涨幅：</strong>{item['20日涨幅']:.2f}% |
+                            <strong>60日涨幅：</strong>{item['60日涨幅']:.2f}% |
+                            <strong>年化波动率：</strong>{item['年化波动率']:.1f}%
+                        </div>
+                        """, unsafe_allow_html=True)
 
-    tab_data, tab_report = st.tabs(["明细数据", "分析报告"])
-    with tab_data:
-        show_cols = ["地区", "所属地域", "年份", "指标名称_纯", "指标值", "单位"]
-        show_cols = [c for c in show_cols if c in df_filtered.columns]
-        st.dataframe(df_filtered[show_cols].head(200), use_container_width=True, hide_index=True)
+                        # 多因子评分
+                        st.markdown(f"""
+                        <div class="factor-box">
+                            <h4>多因子评分详情</h4>
+                            <p>价值因子: {item['价值因子']:.0f}分 |
+                            动量因子: {item['动量因子']:.0f}分 |
+                            质量因子: {item['质量因子']:.0f}分 |
+                            趋势因子: {item['趋势因子']:.0f}分</p>
+                        </div>
+                        """, unsafe_allow_html=True)
 
-        csv_data = df_filtered.to_csv(index=False).encode("utf-8-sig")
-        st.download_button(
-            label="📥 下载完整明细数据 (CSV)",
-            data=csv_data,
-            file_name=f"省级数据库_分析数据_{selected_years[0]}-{selected_years[1]}.csv",
-            mime="text/csv",
-            use_container_width=True
-        )
+                        # DCF估值
+                        st.markdown(f"""
+                        <div class="valuation-box">
+                            <h4>绝对估值 - DCF现金流折现模型</h4>
+                            <p><strong>每股内在价值:</strong> {dcf['内在价值']}元 |
+                            <strong>当前价格:</strong> {dcf['当前价格']}元 |
+                            <strong>估值溢价:</strong> <span style="color:{dcf['估值颜色']};font-weight:bold">{dcf['估值溢价']}% ({dcf['估值判断']})</span></p>
+                            <p><strong>企业价值:</strong> {dcf['企业价值']}亿元 |
+                            <strong>股权价值:</strong> {dcf['股权价值']}亿元 |
+                            <strong>WACC:</strong> {dcf['WACC']}%</p>
+                            <p><strong>预测期FCFF现值:</strong> {dcf['预测期FCFF现值']}亿元 |
+                            <strong>终值现值:</strong> {dcf['终值现值']}亿元</p>
+                        </div>
+                        """, unsafe_allow_html=True)
 
-    with tab_report:
-        report = f"""中国省级数据库2025版 分析报告
-{'='*50}
-分析模式：{mode_desc}
-时间区间：{selected_years[0]}年 - {selected_years[1]}年
-覆盖省份：{len(selected_provinces)}个
-生成时间：{pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')}
+                        # DDM估值
+                        st.markdown(f"""
+                        <div class="valuation-box">
+                            <h4>绝对估值 - DDM股利贴现模型</h4>
+                            <p><strong>每股内在价值:</strong> {ddm['内在价值']}元 |
+                            <strong>当前价格:</strong> {ddm['当前价格']}元 |
+                            <strong>估值溢价:</strong> <span style="color:{ddm['估值颜色']};font-weight:bold">{ddm['估值溢价']}% ({ddm['估值判断']})</span></p>
+                            <p><strong>每股股利(DPS):</strong> {ddm['每股股利']} |
+                            <strong>折现率(r):</strong> {ddm['折现率']}% |
+                            <strong>永续增长率(g):</strong> {ddm['永续增长率']}%</p>
+                        </div>
+                        """, unsafe_allow_html=True)
 
-一、核心统计摘要
-{'-'*30}
-"""
-        if analysis_mode == "🌍 省际对比分析":
-            report += f"""
-分析指标：{selected_metric}（{metric_unit}）
-省份均值：{avg_val:,.2f} {metric_unit}
-全国均值：{national_avg:,.2f} {metric_unit}
-最高值：{max_val:,.2f} {metric_unit}
-省际离散度：{cv_val:.2%}
-整体年均增速：{total_cagr:.2%}
+                        # 相对估值
+                        st.markdown(f"""
+                        <div class="factor-box">
+                            <h4>相对估值法 - 行业对比</h4>
+                            <p><strong>PE:</strong> {relative['PE']} <span style="color:{relative['PE颜色']}">({relative['PE判断']})</span> |
+                            <strong>PB:</strong> {relative['PB']} <span style="color:{relative['PB颜色']}">({relative['PB判断']})</span> |
+                            <strong>PS:</strong> {relative['PS']} <span style="color:{relative['PS颜色']}">({relative['PS判断']})</span></p>
+                            <p><strong>综合判断:</strong> <span style="color:{relative['综合颜色']};font-weight:bold">{relative['综合判断']}</span></p>
+                        </div>
+                        """, unsafe_allow_html=True)
 
-二、省份排名（{latest_year}年）
-{'-'*30}
-"""
-            df_latest_sorted = df_filtered[df_filtered["年份"] == latest_year].sort_values("指标值", ascending=False).reset_index(drop=True)
-            for i, r in df_latest_sorted.iterrows():
-                report += f"第{i+1}名 {r['地区']}：{r['指标值']:,.2f} {metric_unit}\n"
-        else:
-            report += f"""
-分析省份：{prov_name}
-分析指标数：{len(selected_metrics)}个
-高于全国均值指标数：{above_avg_count}个
-指标领先占比：{above_avg_count/len(selected_metrics):.1%}
+                        # 交易指标
+                        mc1, mc2, mc3, mc4 = st.columns(4)
+                        mc1.metric("建议买入价", f"{item['建议买入价']}元", f"现价 {item['最新收盘价']}元")
+                        mc2.metric("预期卖出价", f"{item['预期卖出价']}元", f"收益 {item['预期收益率']}%")
+                        mc3.metric("预期卖出日", item["预期卖出日"], f"持有 {item['持有天数']}天")
+                        mc4.metric("综合评分", f"{item['综合评分']:.1f}分")
 
-二、分指标详情
-{'-'*30}
-"""
-            for d in detail_list:
-                report += f"{d['指标名称']}：{d[f'{prov_name}值']} {d['单位']}，全国均值{d['全国均值']}，相对水平{d['相对水平']}，年均增速{d['年均增速']}\n"
+                        # K线图
+                        k_fig = draw_stock_kline(item["K线数据"], item["股票名称"], item["股票代码"])
+                        st.plotly_chart(k_fig, use_container_width=True)
 
-        report += f"\n{'='*50}\n数据来源：中国省级数据库2025版\n"
+                        # 投资建议
+                        st.markdown("#### 投资建议")
+                        if advice["买入建议"]:
+                            for adv in advice["买入建议"]:
+                                st.markdown(f"<div class='info-box' style='padding:10px;margin:5px 0;'>✅ {adv}</div>", unsafe_allow_html=True)
+                        if advice["风险提示"]:
+                            for risk in advice["风险提示"]:
+                                st.markdown(f"<div class='risk-box' style='padding:10px;margin:5px 0;'>⚠️ {risk}</div>", unsafe_allow_html=True)
 
-        st.text_area("报告预览", report, height=300)
+                st.divider()
+                st.markdown("""
+                <div class="advice-box">
+                    <h4>综合操作建议</h4>
+                    <p>1. 严格按照综合评分排序分配仓位，高分个股优先配置；</p>
+                    <p>2. 关注DCF和DDM估值，优先选择两种绝对估值均显示低估的个股；</p>
+                    <p>3. 相对估值(PE/PB/PS)作为辅助验证，与行业均值对比；</p>
+                    <p>4. 建议分批建仓，首次仓位不超过总资金的20%；</p>
+                    <p>5. 设置8%-10%为止损线，跌破关键支撑位果断止损；</p>
+                    <p>6. 到达预期卖出价后分批止盈，锁定收益；</p>
+                    <p>7. 定期关注多因子评分和估值变化，动态调整持仓。</p>
+                </div>
+                <div class="risk-box">
+                    <strong>风险提示：</strong>本系统基于历史数据和多因子模型进行量化分析，DCF和DDM模型基于多项假设估算，
+                    相对估值法基于行业均值对比，均不构成任何投资建议。股市有风险，入市需谨慎。
+                </div>
+                """, unsafe_allow_html=True)
 
-        col_dl1, col_dl2 = st.columns(2)
-        with col_dl1:
-            st.download_button(
-                label="📥 下载文本报告 (TXT)",
-                data=report.encode("utf-8"),
-                file_name=f"省级数据库分析报告_{pd.Timestamp.now().strftime('%Y%m%d')}.txt",
-                use_container_width=True
+        # ---- Tab4: 价格预测 ----
+        with tab4:
+            st.markdown("### 股票价格预测（蒙特卡洛模拟）")
+            st.markdown("""
+            <div class="info-box">
+                基于历史收益率分布和波动率，采用蒙特卡洛模拟方法进行价格预测。
+                预测结果仅供参考，不构成投资建议。
+            </div>
+            """, unsafe_allow_html=True)
+
+            pred_stock = st.selectbox(
+                "选择预测股票", options=list(stock_options.keys()),
+                format_func=lambda x: stock_options[x], key="pred_stock_select"
             )
 
-        with col_dl2:
-            if analysis_mode == "🌍 省际对比分析":
-                html_report = generate_html_report(
-                    analysis_mode, selected_years, selected_provinces,
-                    selected_metric, selected_metrics, df_filtered, df_full, metric_unit,
-                    latest_year, avg_val, national_avg, max_val, cv_val, total_cagr
-                )
-            else:
-                html_report = generate_html_report(
-                    analysis_mode, selected_years, selected_provinces,
-                    selected_metric, selected_metrics, df_filtered, df_full, metric_unit,
-                    latest_year, detail_list=detail_list, above_avg_count=above_avg_count
-                )
+            if pred_stock:
+                code_int = int(pred_stock)
+                s_df = df_stock[df_stock["股票代码"] == code_int].sort_values("日期").reset_index(drop=True)
+                stock_name = code2name.get(code_int, "未知")
 
-            st.download_button(
-                label="🌐 下载精美HTML报告",
-                data=html_report.encode("utf-8"),
-                file_name=f"省级数据库HTML报告_{pd.Timestamp.now().strftime('%Y%m%d')}.html",
-                mime="text/html",
-                use_container_width=True
-            )
+                if len(s_df) >= 60:
+                    pred_days = st.slider("预测天数", 10, 90, 30, key="pred_days_slider")
+                    pred_df = calc_monte_carlo_prediction(s_df, predict_days=pred_days)
 
-    st.markdown('</div>', unsafe_allow_html=True)
+                    fig_pred = draw_prediction_chart(s_df, pred_df, stock_name, code_int)
+                    st.plotly_chart(fig_pred, use_container_width=True)
 
-    # 底部科技感配图
-    network_img = get_image_base64("assets/network_bg.jpg")
-    if network_img:
-        st.markdown(f"""
-        <div style="margin: 1rem 0 0.5rem 0; border-radius: 12px; overflow: hidden;">
-            <img src="data:image/jpeg;base64,{network_img}" style="width: 100%; height: 120px; object-fit: cover; opacity: 0.5;">
+                    last_price = s_df["收盘"].iloc[-1]
+                    pred_final = pred_df["预测价格"].iloc[-1]
+                    pred_return = (pred_final - last_price) / last_price * 100
+
+                    pc1, pc2, pc3, pc4 = st.columns(4)
+                    pc1.metric("当前价格", f"{last_price:.2f}元")
+                    pc2.metric(f"{pred_days}日后预测价", f"{pred_final:.2f}元", f"{pred_return:+.2f}%")
+                    pc3.metric("预测上界(90%)", f"{pred_df['上界'].iloc[-1]:.2f}元")
+                    pc4.metric("预测下界(90%)", f"{pred_df['下界'].iloc[-1]:.2f}元")
+
+                    with st.expander("查看预测详细数据"):
+                        st.dataframe(pred_df, use_container_width=True, hide_index=True)
+                else:
+                    st.warning(f"{stock_name} 数据不足60条，无法进行可靠预测")
+
+        # ---- Tab5: 风险分析 ----
+        with tab5:
+            st.markdown("### 沪深300成分股风险分析")
+            fig_risk, risk_df = draw_risk_analysis(df_stock, code2name)
+            st.plotly_chart(fig_risk, use_container_width=True)
+
+            st.markdown("#### 风险指标排名（Top 20）")
+            st.dataframe(risk_df, use_container_width=True, hide_index=True)
+
+            st.markdown("""
+            <div class="risk-box">
+                <strong>风险提示：</strong>
+                <p>1. 年化波动率越高，表示价格波动越大，风险越高；</p>
+                <p>2. 最大回撤反映历史最大亏损幅度，是衡量风险的重要指标；</p>
+                <p>3. 夏普比率衡量风险调整后收益，数值越高越好（>1为良好，>2为优秀）；</p>
+                <p>4. 以上指标均基于历史数据计算，不代表未来表现。</p>
+            </div>
+            """, unsafe_allow_html=True)
+
+    else:
+        st.markdown("""
+        <div style="text-align: center; padding: 60px 20px;">
+            <h2 style="color: #1e40af; margin-bottom: 20px;">欢迎使用沪深300股票智能预测分析平台</h2>
+            <p style="color: #64748b; font-size: 1.1rem; max-width: 700px; margin: 0 auto 30px;">
+                本平台基于akshare实时数据，采用绝对估值法(DCF+DDM)和相对估值法(PE/PB/PS)进行多维度估值分析，
+                结合多因子模型进行综合评分选股，提供精美K线图、价格预测和风险评估功能。
+            </p>
+            <div style="display: flex; justify-content: center; gap: 20px; flex-wrap: wrap;">
+                <div style="background: white; padding: 24px; border-radius: 12px; box-shadow: 0 2px 12px rgba(0,0,0,0.08); width: 200px;">
+                    <div style="font-size: 2rem; margin-bottom: 8px;">💰</div>
+                    <strong>绝对估值</strong>
+                    <p style="color: #64748b; font-size: 0.85rem;">DCF现金流折现 + DDM股利贴现</p>
+                </div>
+                <div style="background: white; padding: 24px; border-radius: 12px; box-shadow: 0 2px 12px rgba(0,0,0,0.08); width: 200px;">
+                    <div style="font-size: 2rem; margin-bottom: 8px;">📊</div>
+                    <strong>相对估值</strong>
+                    <p style="color: #64748b; font-size: 0.85rem;">PE/PB/PS行业对比分析</p>
+                </div>
+                <div style="background: white; padding: 24px; border-radius: 12px; box-shadow: 0 2px 12px rgba(0,0,0,0.08); width: 200px;">
+                    <div style="font-size: 2rem; margin-bottom: 8px;">🎯</div>
+                    <strong>多因子模型</strong>
+                    <p style="color: #64748b; font-size: 0.85rem;">价值+动量+质量+趋势综合评分</p>
+                </div>
+                <div style="background: white; padding: 24px; border-radius: 12px; box-shadow: 0 2px 12px rgba(0,0,0,0.08); width: 200px;">
+                    <div style="font-size: 2rem; margin-bottom: 8px;">📈</div>
+                    <strong>K线图</strong>
+                    <p style="color: #64748b; font-size: 0.85rem;">精美K线+均线+MACD+RSI+布林带</p>
+                </div>
+                <div style="background: white; padding: 24px; border-radius: 12px; box-shadow: 0 2px 12px rgba(0,0,0,0.08); width: 200px;">
+                    <div style="font-size: 2rem; margin-bottom: 8px;">🔮</div>
+                    <strong>价格预测</strong>
+                    <p style="color: #64748b; font-size: 0.85rem;">蒙特卡洛模拟预测未来走势</p>
+                </div>
+            </div>
+            <p style="color: #94a3b8; margin-top: 40px; font-size: 0.9rem;">
+                请在左侧控制面板选择数据时间范围，然后点击"开始智能分析"按钮
+            </p>
         </div>
         """, unsafe_allow_html=True)
 
-    # ---- 页脚 ----
+    st.divider()
     st.markdown("""
-    <div class="footer">
-        数据来源：中国省级数据库2025版 &nbsp;|&nbsp; 技术架构：Streamlit + Plotly + Pandas &nbsp;|&nbsp; 支持3000+省级经济社会指标可视化分析
-        <br>© 2025 中国省级数据库可视化分析与决策支持平台
+    <div style="text-align: center; color: #94a3b8; font-size: 0.8rem; padding: 10px;">
+        沪深300股票智能预测分析平台 V4.1 | 数据来源: akshare | 绝对估值(DCF+DDM) | 相对估值(PE/PB/PS) | 本平台仅供学习研究，不构成任何投资建议
     </div>
     """, unsafe_allow_html=True)
+
 
 if __name__ == "__main__":
     main()
