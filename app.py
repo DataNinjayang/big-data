@@ -195,83 +195,73 @@ FALLBACK_HS300 = {
 
 
 # ===================== 数据获取函数（带重试和容错） =====================
-def safe_ak_call(func, max_retries=3, *args, **kwargs):
-    """带重试机制的akshare调用"""
+def safe_ak_call(func, max_retries=3, delay_range=(1.0, 2.5), *args, **kwargs):
+    """带重试机制的akshare调用，支持更长的延迟"""
+    last_error = None
     for attempt in range(max_retries):
         try:
             result = func(*args, **kwargs)
             if result is not None and (isinstance(result, pd.DataFrame) and not result.empty):
                 return result
             if attempt < max_retries - 1:
-                time.sleep(random.uniform(1.5, 3.0))
+                time.sleep(random.uniform(*delay_range))
         except Exception as e:
+            last_error = str(e)
             if attempt < max_retries - 1:
-                time.sleep(random.uniform(1.5, 3.0))
-            else:
-                return None
+                time.sleep(random.uniform(*delay_range))
     return None
 
 
-@st.cache_data(ttl=1800, show_spinner="正在获取沪深300成分股列表...")
+@st.cache_data(ttl=3600, show_spinner="正在获取沪深300成分股列表...")
 def get_hs300_constituents():
     """获取沪深300成分股列表，带多重备用方案"""
     errors = []
 
-    # 方案1: 使用 index_stock_cons
+    # 方案1: index_stock_cons_weight_csindex (中证指数官网，最权威)
+    try:
+        df = ak.index_stock_cons_weight_csindex(symbol="000300")
+        if "成分券代码" in df.columns and "成分券名称" in df.columns:
+            code2name = dict(zip(
+                df["成分券代码"].astype(str).str.strip(),
+                df["成分券名称"].astype(str).str.strip()
+            ))
+            if len(code2name) >= 100:
+                return code2name, f"通过中证指数官网获取沪深300成分股，共 {len(code2name)} 只"
+    except Exception as e:
+        errors.append(f"index_stock_cons_weight_csindex 失败: {e}")
+
+    # 方案2: index_stock_cons_csindex (中证指数，无权重)
+    try:
+        df = ak.index_stock_cons_csindex(symbol="000300")
+        if "成分券代码" in df.columns and "成分券名称" in df.columns:
+            code2name = dict(zip(
+                df["成分券代码"].astype(str).str.strip(),
+                df["成分券名称"].astype(str).str.strip()
+            ))
+            if len(code2name) >= 100:
+                return code2name, f"通过中证指数获取沪深300成分股，共 {len(code2name)} 只"
+    except Exception as e:
+        errors.append(f"index_stock_cons_csindex 失败: {e}")
+
+    # 方案3: index_stock_cons (旧接口)
     try:
         df = ak.index_stock_cons(symbol="000300")
         code_col = "品种代码" if "品种代码" in df.columns else "code"
         name_col = "品种名称" if "品种名称" in df.columns else "code_name"
-        df["纯代码"] = df[code_col].apply(lambda x: re.sub(r"^(sh\.|sz\.)", "", str(x)))
-        df["纯代码"] = df["纯代码"].astype(str).str.strip()
+        df["纯代码"] = df[code_col].astype(str).str.strip().str.replace(r"^(sh\.|sz\.)", "", regex=True)
         df = df[df["纯代码"].str.len() == 6]
-        code2name = dict(zip(df["纯代码"], df[name_col].astype(str)))
+        code2name = dict(zip(df["纯代码"], df[name_col].astype(str).str.strip()))
         if len(code2name) >= 100:
             return code2name, f"成功获取沪深300成分股，共 {len(code2name)} 只"
     except Exception as e:
         errors.append(f"index_stock_cons 失败: {e}")
 
-    # 方案2: 使用 index_stock_cons_sina
-    try:
-        df = ak.index_stock_cons_sina(symbol="000300")
-        if "code" in df.columns:
-            df["纯代码"] = df["code"].astype(str).str.strip()
-        elif "品种代码" in df.columns:
-            df["纯代码"] = df["品种代码"].astype(str).str.strip()
-        else:
-            df["纯代码"] = df.iloc[:, 0].astype(str).str.strip()
-        df = df[df["纯代码"].str.len() == 6]
-        code2name = dict(zip(df["纯代码"], df.get("name", df.get("code_name", df.iloc[:, 1])).astype(str)))
-        if len(code2name) >= 100:
-            return code2name, f"通过备用接口获取沪深300成分股，共 {len(code2name)} 只"
-    except Exception as e:
-        errors.append(f"index_stock_cons_sina 失败: {e}")
-
-    # 方案3: 使用 stock_zh_a_spot_em 获取全市场数据并筛选
-    try:
-        all_spot = ak.stock_zh_a_spot_em()
-        if not all_spot.empty and "代码" in all_spot.columns:
-            # 使用内置列表作为筛选依据
-            filtered = all_spot[all_spot["代码"].isin(FALLBACK_HS300.keys())]
-            code2name = {}
-            for _, row in filtered.iterrows():
-                try:
-                    code = str(row["代码"])
-                    name = str(row.get("名称", FALLBACK_HS300.get(code, "未知")))
-                    code2name[code] = name
-                except:
-                    pass
-            if len(code2name) >= 50:
-                return code2name, f"通过实时行情接口获取，共 {len(code2name)} 只"
-    except Exception as e:
-        errors.append(f"stock_zh_a_spot_em 失败: {e}")
-
     # 方案4: 使用内置兜底列表
-    st.warning(f"在线接口均不可用，使用内置沪深300成分股列表。错误: {'; '.join(errors[:2])}")
+    st.warning(f"在线接口均不可用，使用内置沪深300成分股列表。")
     return FALLBACK_HS300.copy(), f"使用内置沪深300成分股列表，共 {len(FALLBACK_HS300)} 只"
 
 
-@st.cache_data(ttl=1800, show_spinner=False)
+@st.cache_data(ttl=3600, show_spinner=False)
 def get_stock_individual_info(symbol):
     try:
         df = ak.stock_individual_info_em(symbol=symbol)
@@ -280,7 +270,7 @@ def get_stock_individual_info(symbol):
         return {}
 
 
-@st.cache_data(ttl=1800, show_spinner=False)
+@st.cache_data(ttl=3600, show_spinner=False)
 def get_stock_financial_indicators(symbol):
     try:
         return ak.stock_financial_analysis_indicator_em(symbol=symbol)
@@ -288,15 +278,28 @@ def get_stock_financial_indicators(symbol):
         return None
 
 
+def _normalize_hist_df(df, stock_code, stock_name):
+    """统一历史数据DataFrame格式"""
+    df["股票代码"] = stock_code
+    df["股票名称"] = stock_name
+    df["日期"] = pd.to_datetime(df["日期"])
+    for col in ["开盘", "收盘", "最高", "最低", "成交量", "成交额", "振幅", "涨跌额", "换手率", "涨跌幅"]:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+    df = df.dropna(subset=["日期", "开盘", "收盘", "最高", "最低"])
+    df = df.sort_values("日期").reset_index(drop=True)
+    return df
+
+
 def get_stock_history_data(stock_code, stock_name, start_date, end_date):
-    """获取单只股票历史日线数据，带重试和备用方案"""
+    """获取单只股票历史日线数据，支持东财/新浪/腾讯三个数据源"""
     code_str = str(stock_code).zfill(6)
     start_fmt = start_date.replace("-", "")
     end_fmt = end_date.replace("-", "")
 
-    # 方案1: stock_zh_a_hist (东方财富)
+    # 方案1: stock_zh_a_hist (东方财富) - 数据质量最高
     try:
-        df = safe_ak_call(ak.stock_zh_a_hist, max_retries=2,
+        df = safe_ak_call(ak.stock_zh_a_hist, max_retries=2, delay_range=(1.5, 3.0),
                           symbol=code_str, period="daily",
                           start_date=start_fmt, end_date=end_fmt, adjust="qfq")
         if df is not None and not df.empty and len(df) >= 20:
@@ -306,22 +309,14 @@ def get_stock_history_data(stock_code, stock_name, start_date, end_date):
                 "成交额": "成交额", "振幅": "振幅", "涨跌额": "涨跌额",
                 "换手率": "换手率", "涨跌幅": "涨跌幅"
             })
-            df["股票代码"] = stock_code
-            df["股票名称"] = stock_name
-            df["日期"] = pd.to_datetime(df["日期"])
-            for col in ["开盘", "收盘", "最高", "最低", "成交量", "成交额", "振幅", "涨跌额", "换手率", "涨跌幅"]:
-                if col in df.columns:
-                    df[col] = pd.to_numeric(df[col], errors="coerce")
-            df = df.dropna(subset=["日期", "开盘", "收盘", "最高", "最低"])
-            df = df.sort_values("日期").reset_index(drop=True)
-            return df
+            return _normalize_hist_df(df, stock_code, stock_name)
     except Exception:
         pass
 
-    # 方案2: stock_zh_a_daily (新浪财经)
+    # 方案2: stock_zh_a_daily (新浪财经) - 带市场前缀
     try:
         prefix = "sh" if code_str.startswith("6") else "sz"
-        df = safe_ak_call(ak.stock_zh_a_daily, max_retries=2,
+        df = safe_ak_call(ak.stock_zh_a_daily, max_retries=2, delay_range=(1.5, 3.0),
                           symbol=f"{prefix}{code_str}", start_date=start_date, end_date=end_date, adjust="qfq")
         if df is not None and not df.empty and len(df) >= 20:
             df = df.rename(columns={
@@ -330,15 +325,25 @@ def get_stock_history_data(stock_code, stock_name, start_date, end_date):
                 "amount": "成交额", "amplitude": "振幅", "pct_change": "涨跌幅",
                 "change": "涨跌额", "turnover": "换手率"
             })
-            df["股票代码"] = stock_code
-            df["股票名称"] = stock_name
-            df["日期"] = pd.to_datetime(df["日期"])
-            for col in ["开盘", "收盘", "最高", "最低", "成交量", "成交额", "振幅", "涨跌额", "换手率", "涨跌幅"]:
-                if col in df.columns:
-                    df[col] = pd.to_numeric(df[col], errors="coerce")
-            df = df.dropna(subset=["日期", "开盘", "收盘", "最高", "最低"])
-            df = df.sort_values("日期").reset_index(drop=True)
-            return df
+            return _normalize_hist_df(df, stock_code, stock_name)
+    except Exception:
+        pass
+
+    # 方案3: stock_zh_a_hist_tx (腾讯财经) - 带市场前缀
+    try:
+        prefix = "sh" if code_str.startswith("6") else "sz"
+        df = safe_ak_call(ak.stock_zh_a_hist_tx, max_retries=2, delay_range=(1.5, 3.0),
+                          symbol=f"{prefix}{code_str}", start_date=start_date, end_date=end_date, adjust="qfq")
+        if df is not None and not df.empty and len(df) >= 20:
+            df = df.rename(columns={
+                "date": "日期", "open": "开盘", "close": "收盘",
+                "high": "最高", "low": "最低", "amount": "成交额"
+            })
+            # 腾讯接口没有成交量、涨跌幅等字段，用0填充
+            for col in ["成交量", "振幅", "涨跌额", "换手率", "涨跌幅"]:
+                if col not in df.columns:
+                    df[col] = 0.0
+            return _normalize_hist_df(df, stock_code, stock_name)
     except Exception:
         pass
 
@@ -348,18 +353,18 @@ def get_stock_history_data(stock_code, stock_name, start_date, end_date):
 def fetch_all_hs300_data(code2name, start_date, end_date, progress_bar, status_text):
     """批量获取沪深300成分股历史数据，带智能降速"""
     all_data = []
-    total = len(code2name)
     success = 0
     failed = 0
     failed_codes = []
 
-    # 如果股票数量太多，只取前100只以保证稳定性
-    codes_to_fetch = list(code2name.items())[:100]
+    # 限制最多获取50只，保证稳定性
+    codes_to_fetch = list(code2name.items())[:50]
+    total = len(codes_to_fetch)
 
     for i, (code, name) in enumerate(codes_to_fetch):
-        progress_bar.progress(min(i / len(codes_to_fetch), 0.99),
-                              text=f"正在获取: {name}({code}) [{i+1}/{len(codes_to_fetch)}]")
-        status_text.text(f"进度: {i+1}/{len(codes_to_fetch)} | 成功: {success} | 失败: {failed}")
+        progress_bar.progress(min(i / total, 0.99),
+                              text=f"正在获取: {name}({code}) [{i+1}/{total}]")
+        status_text.text(f"进度: {i+1}/{total} | 成功: {success} | 失败: {failed}")
 
         df = get_stock_history_data(code, name, start_date, end_date)
         if df is not None and len(df) >= 20:
@@ -369,11 +374,11 @@ def fetch_all_hs300_data(code2name, start_date, end_date, progress_bar, status_t
             failed += 1
             failed_codes.append(f"{name}({code})")
 
-        # 智能降速：每5只股票后增加随机延迟
-        if (i + 1) % 5 == 0:
-            time.sleep(random.uniform(1.0, 2.0))
+        # 智能降速：每3只股票后增加延迟
+        if (i + 1) % 3 == 0:
+            time.sleep(random.uniform(1.5, 3.0))
         else:
-            time.sleep(random.uniform(0.3, 0.8))
+            time.sleep(random.uniform(0.5, 1.2))
 
     progress_bar.progress(1.0, text="数据获取完成！")
     status_text.text(f"获取完成: 成功 {success} 只, 失败 {failed} 只")
